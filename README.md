@@ -6,6 +6,8 @@ snap-back snapshots your project before and during an agent's work: edits, delet
 
 [![CI](https://github.com/Abelo9996/snap-back/actions/workflows/ci.yml/badge.svg)](https://github.com/Abelo9996/snap-back/actions/workflows/ci.yml)
 
+![snap-back wrapping an agent-like script that deletes two files and rewrites a third, then snap-back undo restoring all three](docs/demo.gif)
+
 ## Quickstart
 
 Requires Node 20 or newer and git on your PATH.
