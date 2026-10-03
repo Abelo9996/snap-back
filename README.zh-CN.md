@@ -23,7 +23,7 @@ npx @abelo9996/snap-back diff
 npx @abelo9996/snap-back undo
 ```
 
-`undo` 会先列出将要恢复和删除的文件，确认之后才会做任何改动。如果不想每次都输入 `npx github:...`，可以全局安装一次：
+`undo` 会先列出将要恢复和删除的文件，确认之后才会做任何改动。如果不想每次都输入 `npx @abelo9996/snap-back ...`，可以全局安装一次：
 
 ```bash
 npm install -g @abelo9996/snap-back

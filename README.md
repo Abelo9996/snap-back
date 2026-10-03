@@ -23,7 +23,7 @@ npx @abelo9996/snap-back diff
 npx @abelo9996/snap-back undo
 ```
 
-`undo` shows the files it will restore and delete and asks before changing anything. To stop typing `npx github:...`, install it once:
+`undo` shows the files it will restore and delete and asks before changing anything. To stop typing `npx @abelo9996/snap-back ...`, install it once:
 
 ```bash
 npm install -g @abelo9996/snap-back
