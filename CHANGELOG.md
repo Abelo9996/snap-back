@@ -18,6 +18,16 @@ All notable changes to this project are recorded here. The format follows
   `SNAPBACK_DEBUG`; the old names are still read.
 - The project ignore file is now `.snap-back-ignore`. `.snapbackignore` is still read.
 - The Agent Skill moved to `skills/snap-back/SKILL.md`.
+- `hooks install` now writes `.claude/settings.local.json` by default instead of
+  `.claude/settings.json`, so the hooks (and any machine-specific path in the hook
+  command) are not committed by accident. `--shared` writes `.claude/settings.json`
+  and prints a warning when the hook command contains a path that exists only on
+  this machine. `--local` is still accepted.
+- `hooks uninstall` removes the hooks from both settings files unless `--shared` or
+  `--local` picks one, and `hooks status` and `status` report each file.
+- Library API: `installClaudeHooks` takes `shared` instead of `local`,
+  `uninstallClaudeHooks` takes an optional `scope` and returns results for each
+  file, and `claudeHookStatus` reports both files.
 
 ## [0.1.0] - 2026-10-03
 

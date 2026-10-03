@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import path from "node:path";
 import { createInterface } from "node:readline";
 import { cac } from "cac";
 import { GitMissingError, gitVersion } from "./git.js";
 import {
-  claudeHooksInstalled,
+  claudeHookStatus,
   handleClaudeHook,
+  type HookScope,
   installClaudeHooks,
   runningFromNpxCache,
   uninstallClaudeHooks,
@@ -233,36 +235,67 @@ cli
 cli
   .command("hooks <action>", "Install or remove agent hooks: hooks install|uninstall|status --agent claude")
   .option("--agent <name>", "Agent to integrate with", { default: "claude" })
-  .option("--local", "Use .claude/settings.local.json (not committed) instead of .claude/settings.json")
+  .option("--shared", "Use .claude/settings.json, which projects usually commit, instead of .claude/settings.local.json")
+  .option("--local", "Use only .claude/settings.local.json (the default for install)")
   .option("--command <cmd>", "Command that runs snap-back inside the hook (default: auto-detected)")
-  .action(async (action: string, opts: GlobalOpts & { agent: string; local?: boolean; command?: string }) => {
+  .action(async (action: string, opts: GlobalOpts & { agent: string; shared?: boolean; local?: boolean; command?: string }) => {
     if (opts.agent !== "claude") {
       err(`No hook integration for "${opts.agent}" yet. Use \`snap-back wrap -- ${opts.agent}\` or \`snap-back watch\` instead.`);
       process.exitCode = 1;
       return;
     }
+    if (opts.shared && opts.local) {
+      err("Pass either --shared or --local, not both.");
+      process.exitCode = 1;
+      return;
+    }
     const root = rootFrom(opts);
+    const rel = (file: string) => path.relative(root, file).split(path.sep).join("/");
+    const scope: HookScope | undefined = opts.shared ? "shared" : opts.local ? "local" : undefined;
     if (action === "install") {
-      const r = installClaudeHooks(root, { local: opts.local, command: opts.command });
+      const r = installClaudeHooks(root, { shared: opts.shared, command: opts.command });
       if (!r.added.length) {
         out(`snap-back hooks are already installed in ${r.file}`);
-        return;
+      } else {
+        out(`Added snap-back hooks (${r.added.join(", ")}) to ${r.file}`);
+        if (r.replaced) out(`Replaced ${r.replaced} hook(s) from an earlier install that used a different command.`);
+        if (r.backup) out(`Backup of the previous file: ${r.backup}`);
+        out(`Hook command: ${r.command}`);
       }
-      out(`Added snap-back hooks (${r.added.join(", ")}) to ${r.file}`);
-      if (r.replaced) out(`Replaced ${r.replaced} hook(s) from an earlier install that used a different command.`);
-      if (r.backup) out(`Backup of the previous file: ${r.backup}`);
-      out(`Hook command: ${r.command}`);
-      if (runningFromNpxCache() && !opts.command) {
+      if (r.scope === "shared" && r.machineSpecific) {
+        err(yellow(`Warning: the hook command contains a path that exists only on this machine:`));
+        err(yellow(`  ${r.command}`));
+        err(yellow(`${rel(r.file)} is usually committed, and anyone else who uses it gets a hook that fails.`));
+        err(yellow("Install snap-back globally so the hook can use the portable command `snap-back hook claude`:"));
+        err(yellow("  npm install -g github:Abelo9996/snap-back"));
+        err(yellow("  snap-back hooks install --shared"));
+        err(yellow("Or run `snap-back hooks install` without --shared to keep the hooks in .claude/settings.local.json."));
+      } else if (r.added.length && runningFromNpxCache() && !opts.command) {
         out(yellow("Note: snap-back is running from the npx cache, so the hook points into that cache."));
         out(yellow("For a stable hook, run `npm install -g github:Abelo9996/snap-back` and then reinstall the hooks."));
       }
-      out("Restart Claude Code (or open /hooks) so it picks up the new hooks.");
+      if (r.scope === "local" && r.created) {
+        out(`${rel(r.file)} holds personal settings. If git lists it as untracked, add it to .gitignore.`);
+      }
+      if (r.alsoIn) {
+        const flag = r.scope === "shared" ? "--local" : "--shared";
+        out(`snap-back hooks are also in ${rel(r.alsoIn)}. To remove them from there: snap-back hooks uninstall ${flag}`);
+      }
+      if (r.added.length) out("Restart Claude Code (or open /hooks) so it picks up the new hooks.");
     } else if (action === "uninstall") {
-      const r = uninstallClaudeHooks(root, { local: opts.local });
-      out(r.removed ? `Removed ${r.removed} snap-back hook(s) from ${r.file}` : `No snap-back hooks found in ${r.file}`);
-      if (r.backup) out(`Backup of the previous file: ${r.backup}`);
+      const { results, errors } = uninstallClaudeHooks(root, { scope });
+      for (const r of results) {
+        out(r.removed ? `Removed ${r.removed} snap-back hook(s) from ${r.file}` : `No snap-back hooks found in ${r.file}`);
+        if (r.backup) out(`Backup of the previous file: ${r.backup}`);
+      }
+      for (const e of errors) err(`snap-back: ${e.message}`);
+      if (errors.length) process.exitCode = 1;
     } else if (action === "status") {
-      out(claudeHooksInstalled(root) ? "Claude Code hooks: installed" : "Claude Code hooks: not installed");
+      for (const st of claudeHookStatus(root)) {
+        if (scope && st.scope !== scope) continue;
+        const state = st.error ? `unreadable (${st.error})` : st.installed ? "installed" : "not installed";
+        out(`Claude Code hooks in ${rel(st.file)}: ${state}`);
+      }
     } else {
       err(`Unknown action "${action}". Use install, uninstall or status.`);
       process.exitCode = 1;
@@ -312,7 +345,10 @@ cli.command("status", "Show where snapshots live and what changed since the last
     if (all[0]) out(`latest:    ${describe(all[0])}`);
     out(`pending:   ${await store.pendingChanges()} file(s) changed since the latest snapshot`);
   }
-  out(`hooks:     Claude Code ${claudeHooksInstalled(root) ? "installed" : "not installed"}`);
+  const installedIn = claudeHookStatus(root)
+    .filter((st) => st.installed)
+    .map((st) => path.relative(root, st.file).split(path.sep).join("/"));
+  out(`hooks:     Claude Code ${installedIn.length ? "installed in " + installedIn.join(" and ") : "not installed"}`);
 });
 
 cli.help();

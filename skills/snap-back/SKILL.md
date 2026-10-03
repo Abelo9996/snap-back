@@ -27,6 +27,12 @@ need one before every small edit. If `snap-back hooks status` reports that Claud
 Code hooks are installed, tool calls are already checkpointed automatically, but
 a labelled `snap` still makes the history easier for the user to read.
 
+If the user asks for automatic checkpoints in Claude Code, `snap-back hooks install`
+adds the hooks to `.claude/settings.local.json`, which is personal and not meant to
+be committed. Only pass `--shared` (which writes the usually committed
+`.claude/settings.json`) when the user asks for the hooks to be shared with the
+project, and relay any warning it prints about a machine-specific path.
+
 ## Looking at what changed
 
 ```bash

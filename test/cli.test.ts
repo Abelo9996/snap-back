@@ -97,6 +97,39 @@ describe("cli (built dist/cli.js)", () => {
     expect(r.stdout).toBe("");
   });
 
+  it("hooks install writes settings.local.json by default, and status and uninstall cover both files", () => {
+    const install = run(["hooks", "install", "--command", "snap-back"]);
+    expect(install.code).toBe(0);
+    expect(install.stdout).toContain("settings.local.json");
+    expect(install.stderr).not.toContain("Warning");
+    expect(existsSync(path.join(root, ".claude", "settings.local.json"))).toBe(true);
+    expect(existsSync(path.join(root, ".claude", "settings.json"))).toBe(false);
+
+    expect(run(["hooks", "install", "--shared", "--command", "snap-back"]).code).toBe(0);
+    const status = run(["hooks", "status"]);
+    expect(status.stdout).toContain("Claude Code hooks in .claude/settings.local.json: installed");
+    expect(status.stdout).toContain("Claude Code hooks in .claude/settings.json: installed");
+
+    const un = run(["hooks", "uninstall"]);
+    expect(un.code).toBe(0);
+    expect(un.stdout.match(/Removed 3 snap-back hook\(s\)/g)).toHaveLength(2);
+    expect(run(["hooks", "status"]).stdout).not.toMatch(/: installed/);
+  });
+
+  it("hooks install --shared warns when the command contains a machine-specific path", () => {
+    const r = run(["hooks", "install", "--shared", "--command", `node ${CLI.split(path.sep).join("/")}`]);
+    expect(r.code).toBe(0);
+    expect(existsSync(path.join(root, ".claude", "settings.json"))).toBe(true);
+    expect(r.stderr).toContain("Warning: the hook command contains a path that exists only on this machine");
+    expect(r.stderr).toContain("npm install -g github:Abelo9996/snap-back");
+  });
+
+  it("hooks install rejects --shared together with --local", () => {
+    const r = run(["hooks", "install", "--shared", "--local"]);
+    expect(r.code).toBe(1);
+    expect(existsSync(path.join(root, ".claude"))).toBe(false);
+  });
+
   it("explains a missing git and exits 2", () => {
     const r = run(["snap"], { PATH: tempDir("empty-path-") });
     expect(r.code).toBe(2);

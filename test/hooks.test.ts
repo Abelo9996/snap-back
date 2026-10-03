@@ -1,13 +1,21 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { claudeHooksInstalled, handleClaudeHook, installClaudeHooks, uninstallClaudeHooks } from "../src/hooks.js";
+import {
+  claudeHookStatus,
+  claudeHooksInstalled,
+  handleClaudeHook,
+  installClaudeHooks,
+  isMachineSpecificCommand,
+  uninstallClaudeHooks,
+} from "../src/hooks.js";
 import { Store } from "../src/store.js";
 import { cleanup, isolateHome, read, tempDir, write } from "./helpers.js";
 
 let root: string;
-const settingsPath = () => path.join(root, ".claude", "settings.json");
-const readSettings = () => JSON.parse(readFileSync(settingsPath(), "utf8"));
+const localPath = () => path.join(root, ".claude", "settings.local.json");
+const sharedPath = () => path.join(root, ".claude", "settings.json");
+const readJson = (file: string) => JSON.parse(readFileSync(file, "utf8"));
 
 beforeEach(() => {
   isolateHome();
@@ -24,12 +32,111 @@ const existing = {
   },
 };
 
-describe("Claude Code hooks install", () => {
-  it("merges into existing settings without clobbering them, and backs the file up", () => {
+const legacy = (cmd = "snapback hook claude") => ({
+  ...existing,
+  hooks: {
+    ...existing.hooks,
+    UserPromptSubmit: [{ hooks: [{ type: "command", command: cmd, timeout: 30 }] }],
+    PreToolUse: [...existing.hooks.PreToolUse, { matcher: "Edit|Write", hooks: [{ type: "command", command: cmd, timeout: 30 }] }],
+    PostToolUse: [{ matcher: "Edit|Write", hooks: [{ type: "command", command: cmd, timeout: 30 }] }],
+  },
+});
+
+function allCommands(file: string): string[] {
+  const s = readJson(file);
+  return Object.values(s.hooks as Record<string, { hooks: { command: string }[] }[]>)
+    .flat()
+    .flatMap((g) => g.hooks.map((h) => h.command));
+}
+
+describe("Claude Code hooks install defaults", () => {
+  it("writes .claude/settings.local.json and leaves settings.json alone", () => {
     write(root, ".claude/settings.json", JSON.stringify(existing, null, 2));
+    const before = read(root, ".claude/settings.json");
     const r = installClaudeHooks(root, { command: "snap-back" });
+    expect(r.scope).toBe("local");
+    expect(r.file).toBe(localPath());
+    expect(r.created).toBe(true);
+    expect(existsSync(localPath())).toBe(true);
+    expect(read(root, ".claude/settings.json")).toBe(before);
+    expect(claudeHookStatus(root).map((st) => [st.scope, st.installed])).toEqual([
+      ["local", true],
+      ["shared", false],
+    ]);
+  });
+
+  it("writes .claude/settings.json only with shared", () => {
+    const r = installClaudeHooks(root, { command: "snap-back", shared: true });
+    expect(r.scope).toBe("shared");
+    expect(existsSync(sharedPath())).toBe(true);
+    expect(existsSync(localPath())).toBe(false);
+  });
+
+  it("flags commands that contain a machine-specific path", () => {
+    expect(isMachineSpecificCommand("snap-back hook claude")).toBe(false);
+    expect(isMachineSpecificCommand('node "/home/me/.npm/_npx/abc/node_modules/snap-back/dist/cli.js" hook claude')).toBe(true);
+    expect(isMachineSpecificCommand('node "C:/Users/me/AppData/Local/npm-cache/_npx/abc/cli.js" hook claude')).toBe(true);
+    expect(installClaudeHooks(root, { command: "snap-back", shared: true }).machineSpecific).toBe(false);
+    const r = installClaudeHooks(root, { command: "node /opt/snap-back/dist/cli.js", shared: true });
+    expect(r.machineSpecific).toBe(true);
+  });
+
+  it("reports when the other settings file also has the hooks", () => {
+    installClaudeHooks(root, { command: "snap-back", shared: true });
+    const r = installClaudeHooks(root, { command: "snap-back" });
+    expect(r.alsoIn).toBe(sharedPath());
+  });
+
+  it("uninstall without a scope cleans both files", () => {
+    write(root, ".claude/settings.json", JSON.stringify(existing));
+    write(root, ".claude/settings.local.json", JSON.stringify(existing));
+    installClaudeHooks(root, { command: "snap-back", shared: true });
+    installClaudeHooks(root, { command: "snap-back" });
+    const { results, errors } = uninstallClaudeHooks(root);
+    expect(errors).toEqual([]);
+    expect(results.map((r) => [r.scope, r.removed])).toEqual([
+      ["local", 3],
+      ["shared", 3],
+    ]);
+    expect(readJson(sharedPath())).toEqual(existing);
+    expect(readJson(localPath())).toEqual(existing);
+    expect(claudeHooksInstalled(root)).toBe(false);
+  });
+
+  it("uninstall with a scope cleans only that file", () => {
+    installClaudeHooks(root, { command: "snap-back", shared: true });
+    installClaudeHooks(root, { command: "snap-back" });
+    const { results } = uninstallClaudeHooks(root, { scope: "shared" });
+    expect(results.map((r) => r.file)).toEqual([sharedPath()]);
+    expect(claudeHookStatus(root).map((st) => st.installed)).toEqual([true, false]);
+  });
+
+  it("uninstall still cleans one file when the other is not valid JSON", () => {
+    write(root, ".claude/settings.json", "{ not json");
+    installClaudeHooks(root, { command: "snap-back" });
+    const { results, errors } = uninstallClaudeHooks(root);
+    expect(results.map((r) => [r.scope, r.removed])).toEqual([["local", 3]]);
+    expect(errors.map((e) => e.file)).toEqual([sharedPath()]);
+    expect(read(root, ".claude/settings.json")).toBe("{ not json");
+    expect(claudeHookStatus(root)[1].error).toMatch(/not valid JSON/);
+  });
+});
+
+describe.each([
+  { scope: "local" as const, shared: false, file: "settings.local.json" },
+  { scope: "shared" as const, shared: true, file: "settings.json" },
+])("Claude Code hooks in $file", ({ scope, shared, file }) => {
+  const settingsPath = () => path.join(root, ".claude", file);
+  const readSettings = () => readJson(settingsPath());
+
+  it("merges into existing settings without clobbering them, and backs the file up", () => {
+    write(root, `.claude/${file}`, JSON.stringify(existing, null, 2));
+    const r = installClaudeHooks(root, { command: "snap-back", shared });
+    expect(r.file).toBe(settingsPath());
+    expect(r.created).toBe(false);
     expect(r.added).toEqual(["UserPromptSubmit", "PreToolUse", "PostToolUse"]);
     expect(r.backup && existsSync(r.backup)).toBe(true);
+    expect(path.basename(r.backup!)).toMatch(new RegExp(`^${file.replace(/\./g, "\\.")}\\.snap-back-backup-\\d{8}-\\d{6}$`));
     expect(JSON.parse(readFileSync(r.backup!, "utf8"))).toEqual(existing);
 
     const s = readSettings();
@@ -42,78 +149,66 @@ describe("Claude Code hooks install", () => {
     expect(s.hooks.PreToolUse[1].hooks[0]).toMatchObject({ type: "command", command: "snap-back hook claude" });
     expect(s.hooks.PostToolUse).toHaveLength(1);
     expect(s.hooks.UserPromptSubmit[0].matcher).toBeUndefined();
-    expect(claudeHooksInstalled(root)).toBe(true);
+    expect(claudeHookStatus(root).find((st) => st.scope === scope)!.installed).toBe(true);
   });
 
   it("is idempotent", () => {
-    write(root, ".claude/settings.json", JSON.stringify(existing));
-    installClaudeHooks(root, { command: "snap-back" });
+    write(root, `.claude/${file}`, JSON.stringify(existing));
+    installClaudeHooks(root, { command: "snap-back", shared });
     const once = readFileSync(settingsPath(), "utf8");
-    const backupsBefore = readdirSync(path.join(root, ".claude")).length;
-    const r = installClaudeHooks(root, { command: "snap-back" });
+    const filesBefore = readdirSync(path.join(root, ".claude")).length;
+    const r = installClaudeHooks(root, { command: "snap-back", shared });
     expect(r.added).toEqual([]);
+    expect(r.backup).toBeUndefined();
     expect(readFileSync(settingsPath(), "utf8")).toBe(once);
-    expect(readdirSync(path.join(root, ".claude")).length).toBe(backupsBefore);
+    expect(readdirSync(path.join(root, ".claude")).length).toBe(filesBefore);
   });
 
-  it("creates the settings file when there is none", () => {
-    const r = installClaudeHooks(root, { command: "snap-back" });
+  it("creates the settings file when there is none, without a backup", () => {
+    const r = installClaudeHooks(root, { command: "snap-back", shared });
+    expect(r.created).toBe(true);
     expect(r.backup).toBeUndefined();
     expect(Object.keys(readSettings().hooks).sort()).toEqual(["PostToolUse", "PreToolUse", "UserPromptSubmit"]);
-  });
-
-  it("writes settings.local.json with --local", () => {
-    installClaudeHooks(root, { command: "snap-back", local: true });
-    expect(existsSync(path.join(root, ".claude", "settings.local.json"))).toBe(true);
-    expect(existsSync(settingsPath())).toBe(false);
+    expect(readdirSync(path.join(root, ".claude"))).toEqual([file]);
   });
 
   it("refuses to touch invalid JSON", () => {
-    write(root, ".claude/settings.json", "{ not json");
-    expect(() => installClaudeHooks(root, { command: "snap-back" })).toThrow(/not valid JSON/);
-    expect(read(root, ".claude/settings.json")).toBe("{ not json");
+    write(root, `.claude/${file}`, "{ not json");
+    expect(() => installClaudeHooks(root, { command: "snap-back", shared })).toThrow(/not valid JSON/);
+    expect(read(root, `.claude/${file}`)).toBe("{ not json");
   });
 
-  it("uninstall removes only snap-back's entries", () => {
-    write(root, ".claude/settings.json", JSON.stringify(existing));
-    installClaudeHooks(root, { command: "snap-back" });
-    const r = uninstallClaudeHooks(root);
-    expect(r.removed).toBe(3);
+  it("uninstall removes only snap-back's entries and backs the file up", () => {
+    write(root, `.claude/${file}`, JSON.stringify(existing));
+    installClaudeHooks(root, { command: "snap-back", shared });
+    const withHooks = readSettings();
+    const { results } = uninstallClaudeHooks(root, { scope });
+    expect(results).toHaveLength(1);
+    expect(results[0].removed).toBe(3);
+    expect(JSON.parse(readFileSync(results[0].backup!, "utf8"))).toEqual(withHooks);
     expect(readSettings()).toEqual(existing);
     expect(claudeHooksInstalled(root)).toBe(false);
   });
 
-  const legacy = (cmd = "snapback hook claude") => ({
-    ...existing,
-    hooks: {
-      ...existing.hooks,
-      UserPromptSubmit: [{ hooks: [{ type: "command", command: cmd, timeout: 30 }] }],
-      PreToolUse: [...existing.hooks.PreToolUse, { matcher: "Edit|Write", hooks: [{ type: "command", command: cmd, timeout: 30 }] }],
-      PostToolUse: [{ matcher: "Edit|Write", hooks: [{ type: "command", command: cmd, timeout: 30 }] }],
-    },
-  });
-
   it("reinstall replaces hooks written before the rename", () => {
-    write(root, ".claude/settings.json", JSON.stringify(legacy()));
+    write(root, `.claude/${file}`, JSON.stringify(legacy()));
     expect(claudeHooksInstalled(root)).toBe(true);
-    const r = installClaudeHooks(root, { command: "snap-back" });
+    const r = installClaudeHooks(root, { command: "snap-back", shared });
     expect(r.replaced).toBe(3);
     expect(r.added).toEqual(["UserPromptSubmit", "PreToolUse", "PostToolUse"]);
-    const s = readSettings();
-    const commands = Object.values(s.hooks as Record<string, { hooks: { command: string }[] }[]>)
-      .flat()
-      .flatMap((g) => g.hooks.map((h) => h.command));
+    const commands = allCommands(settingsPath());
     expect(commands).not.toContain("snapback hook claude");
     expect(commands.filter((c) => c === "snap-back hook claude")).toHaveLength(3);
+    const s = readSettings();
     expect(s.hooks.PreToolUse[0]).toEqual(existing.hooks.PreToolUse[0]);
     expect(s.hooks.Stop).toEqual(existing.hooks.Stop);
-    expect(installClaudeHooks(root, { command: "snap-back" }).added).toEqual([]);
+    expect(installClaudeHooks(root, { command: "snap-back", shared }).added).toEqual([]);
   });
 
   it("uninstall removes hooks written before the rename", () => {
-    write(root, ".claude/settings.json", JSON.stringify(legacy('node "/home/me/.npm/_npx/abc/node_modules/snapback/dist/cli.js" hook claude')));
-    const r = uninstallClaudeHooks(root);
-    expect(r.removed).toBe(3);
+    write(root, `.claude/${file}`, JSON.stringify(legacy('node "/home/me/.npm/_npx/abc/node_modules/snapback/dist/cli.js" hook claude')));
+    const { results } = uninstallClaudeHooks(root);
+    expect(results.find((r) => r.scope === scope)!.removed).toBe(3);
     expect(readSettings()).toEqual(existing);
   });
 });

@@ -37,7 +37,7 @@ snap-back writes to:
   - Override with `SNAP_BACK_HOME` (`SNAPBACK_HOME` is still read).
   - If a `snapback` directory from a version before the rename exists in that location, it keeps being used, so existing snapshots stay available.
 - **Files in your project, only when you run `undo` or `restore`**, and only after showing you the list and getting a yes (or `--yes`). Before every restore it records a safety snapshot of the current files, so a restore can itself be undone.
-- **`.claude/settings.json`, only when you run `snap-back hooks install`**. Existing settings are merged, never replaced, and the previous file is copied to `settings.json.snap-back-backup-<timestamp>` first.
+- **`.claude/settings.local.json`, only when you run `snap-back hooks install`** (or `.claude/settings.json` with `--shared`). Existing settings are merged, never replaced, and the previous file is copied to `<file>.snap-back-backup-<timestamp>` first.
 
 snap-back never touches:
 
@@ -81,13 +81,19 @@ Running `undo` twice walks back two bursts. To reverse an undo, run the `snap-ba
 ### Claude Code
 
 ```bash
-snap-back hooks install --agent claude          # writes .claude/settings.json
-snap-back hooks install --agent claude --local  # or .claude/settings.local.json (not committed)
-snap-back hooks status
-snap-back hooks uninstall
+snap-back hooks install --agent claude           # writes .claude/settings.local.json
+snap-back hooks install --agent claude --shared  # writes .claude/settings.json instead
+snap-back hooks status                           # reports both files
+snap-back hooks uninstall                        # removes the hooks from both files
 ```
 
-The hooks run `snap-back hook claude` on `UserPromptSubmit`, `PreToolUse` and `PostToolUse`. The hook always exits 0 and prints nothing to stdout, so it can never block a tool call or inject text into the conversation. If snap-back is not installed globally, the hook command points at the absolute path of the copy you ran; `npm install -g` first gives a portable `snap-back hook claude` command. Use `--command <cmd>` to set it yourself.
+The hooks run `snap-back hook claude` on `UserPromptSubmit`, `PreToolUse` and `PostToolUse`. The hook always exits 0 and prints nothing to stdout, so it can never block a tool call or inject text into the conversation.
+
+By default the hooks go into `.claude/settings.local.json`, which holds your personal settings and is not meant to be committed. If git lists it as untracked, add it to `.gitignore`. Use `--shared` to write `.claude/settings.json`, which projects usually commit, when everyone on the project should get the hooks.
+
+If snap-back is not installed globally, the hook command points at the absolute path of the copy you ran (for `npx`, a directory in the npx cache). That path exists only on your machine, so `--shared` prints a warning in that case. Run `npm install -g github:Abelo9996/snap-back` first to get the portable `snap-back hook claude` command, then install the hooks. Use `--command <cmd>` to set the command yourself.
+
+`uninstall` takes `--shared` or `--local` to clean only one file. Reinstalling replaces hook entries from an earlier install that used a different command, including the `snapback hook claude` form from before the rename.
 
 Claude Code's built-in rewind covers edits made through its own file tools. snap-back also covers files changed by shell commands (`rm`, codemods, formatters, generators) and works the same way across every agent you use.
 
@@ -111,7 +117,7 @@ snap-back restore <id> [--yes] [-- <paths>...]
                                        restore everything, or only some paths
 snap-back watch [--debounce 1500]       snapshot on file changes
 snap-back wrap [--interval 30] -- <cmd> checkpoint, run cmd, checkpoint
-snap-back hooks install|uninstall|status --agent claude [--local]
+snap-back hooks install|uninstall|status --agent claude [--shared|--local]
 snap-back gc [--keep 100] [--keep-days 14] [--yes]
 snap-back status
 ```

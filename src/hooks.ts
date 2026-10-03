@@ -15,19 +15,43 @@ type HookEntry = { type?: string; command?: string; [k: string]: unknown };
 type HookGroup = { matcher?: string; hooks?: HookEntry[]; [k: string]: unknown };
 type Settings = { hooks?: Record<string, HookGroup[]>; [k: string]: unknown };
 
+/**
+ * Which Claude Code settings file to use. `local` is .claude/settings.local.json,
+ * which is personal and usually not committed. `shared` is .claude/settings.json,
+ * which projects usually commit.
+ */
+export type HookScope = "local" | "shared";
+export const HOOK_SCOPES: readonly HookScope[] = ["local", "shared"];
+
 export interface InstallResult {
   file: string;
+  scope: HookScope;
+  /** True when the settings file did not exist before this install. */
+  created: boolean;
   backup?: string;
   added: string[];
   /** Entries from an earlier install with a different command that were replaced. */
   replaced: number;
   command: string;
+  /** True when the command contains a path that exists only on this machine. */
+  machineSpecific: boolean;
+  /** The other settings file, when it also contains snap-back hooks. */
+  alsoIn?: string;
 }
 
 export interface UninstallResult {
   file: string;
+  scope: HookScope;
   backup?: string;
   removed: number;
+}
+
+export interface HookStatus {
+  file: string;
+  scope: HookScope;
+  installed: boolean;
+  /** Set when the file exists but could not be read as settings. */
+  error?: string;
 }
 
 function findOnPath(name: string): string | null {
@@ -65,8 +89,17 @@ export function defaultHookCommand(): string {
   return `${node} ${q(script)} hook claude`;
 }
 
-function settingsFile(root: string, local: boolean): string {
-  return path.join(root, ".claude", local ? "settings.local.json" : "settings.json");
+export function claudeSettingsFile(root: string, scope: HookScope): string {
+  return path.join(root, ".claude", scope === "shared" ? "settings.json" : "settings.local.json");
+}
+
+/**
+ * True when a hook command depends on this machine's file layout (an absolute
+ * path to node or to the script), so it would fail for anyone else who uses the
+ * same settings file.
+ */
+export function isMachineSpecificCommand(command: string): boolean {
+  return /[\\/]/.test(command);
 }
 
 function readSettings(file: string): Settings {
@@ -125,13 +158,16 @@ function stripOurs(groups: HookGroup[], drop: (h: HookEntry) => boolean): { kept
 }
 
 /**
- * Merge snap-back's hook entries into .claude/settings.json (or settings.local.json).
- * Existing settings and hooks are preserved; the file is backed up before writing.
- * Entries from an earlier install with a different command (for example the
- * `snapback hook claude` form from before the rename) are replaced.
+ * Merge snap-back's hook entries into .claude/settings.local.json, or into
+ * .claude/settings.json with `shared: true`. Existing settings and hooks are
+ * preserved; the file is backed up before writing. Entries from an earlier
+ * install with a different command (for example the `snapback hook claude`
+ * form from before the rename) are replaced.
  */
-export function installClaudeHooks(root: string, opts: { command?: string; local?: boolean } = {}): InstallResult {
-  const file = settingsFile(root, !!opts.local);
+export function installClaudeHooks(root: string, opts: { command?: string; shared?: boolean } = {}): InstallResult {
+  const scope: HookScope = opts.shared ? "shared" : "local";
+  const file = claudeSettingsFile(root, scope);
+  const created = !existsSync(file);
   const settings = readSettings(file);
   const command = opts.command ? `${opts.command} hook claude` : defaultHookCommand();
   const hooks = (settings.hooks ??= {});
@@ -154,19 +190,21 @@ export function installClaudeHooks(root: string, opts: { command?: string; local
     hooks[event] = current ? kept : [...kept, group];
     added.push(event);
   }
-  if (!added.length) return { file, added, replaced, command };
+  const other = claudeHookStatus(root).find((st) => st.scope !== scope && st.installed);
+  const base = { file, scope, added, replaced, command, machineSpecific: isMachineSpecificCommand(command), alsoIn: other?.file };
+  if (!added.length) return { ...base, created: false };
   const bak = backup(file);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
-  return { file, backup: bak, added, replaced, command };
+  return { ...base, created, backup: bak };
 }
 
-export function uninstallClaudeHooks(root: string, opts: { local?: boolean } = {}): UninstallResult {
-  const file = settingsFile(root, !!opts.local);
+function uninstallFrom(root: string, scope: HookScope): UninstallResult {
+  const file = claudeSettingsFile(root, scope);
   const settings = readSettings(file);
   let removed = 0;
   const hooks = settings.hooks;
-  if (!hooks) return { file, removed };
+  if (!hooks) return { file, scope, removed };
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue;
@@ -175,23 +213,49 @@ export function uninstallClaudeHooks(root: string, opts: { local?: boolean } = {
     if (r.kept.length) hooks[event] = r.kept;
     else delete hooks[event];
   }
-  if (!removed) return { file, removed };
+  if (!removed) return { file, scope, removed };
   if (!Object.keys(hooks).length) delete settings.hooks;
   const bak = backup(file);
   writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
-  return { file, backup: bak, removed };
+  return { file, scope, backup: bak, removed };
+}
+
+/**
+ * Remove snap-back's hook entries. Without `scope`, both settings files are
+ * cleaned. Files that are not valid JSON are left unchanged and reported in
+ * `errors`; the other file is still processed.
+ */
+export function uninstallClaudeHooks(
+  root: string,
+  opts: { scope?: HookScope } = {},
+): { results: UninstallResult[]; errors: { file: string; message: string }[] } {
+  const results: UninstallResult[] = [];
+  const errors: { file: string; message: string }[] = [];
+  for (const scope of opts.scope ? [opts.scope] : HOOK_SCOPES) {
+    try {
+      results.push(uninstallFrom(root, scope));
+    } catch (e) {
+      errors.push({ file: claudeSettingsFile(root, scope), message: (e as Error).message });
+    }
+  }
+  return { results, errors };
+}
+
+/** Whether each settings file (local, then shared) contains snap-back hooks. */
+export function claudeHookStatus(root: string): HookStatus[] {
+  return HOOK_SCOPES.map((scope) => {
+    const file = claudeSettingsFile(root, scope);
+    try {
+      const s = readSettings(file);
+      return { file, scope, installed: Object.values(s.hooks ?? {}).some((g) => Array.isArray(g) && hasOurHook(g)) };
+    } catch (e) {
+      return { file, scope, installed: false, error: (e as Error).message };
+    }
+  });
 }
 
 export function claudeHooksInstalled(root: string): boolean {
-  for (const local of [false, true]) {
-    try {
-      const s = readSettings(settingsFile(root, local));
-      if (Object.values(s.hooks ?? {}).some((g) => Array.isArray(g) && hasOurHook(g))) return true;
-    } catch {
-      // unreadable settings: report as not installed
-    }
-  }
-  return false;
+  return claudeHookStatus(root).some((st) => st.installed);
 }
 
 interface ClaudeHookPayload {
