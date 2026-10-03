@@ -1,0 +1,27 @@
+name: Agent integration request
+description: Ask for first-class support for a coding agent
+labels: [agent-integration]
+body:
+  - type: input
+    id: agent
+    attributes:
+      label: Agent
+      placeholder: Name and link
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What happens today with `snapback wrap` or `snapback watch`
+      description: Where do those fall short for this agent?
+    validations:
+      required: true
+  - type: textarea
+    id: hooks
+    attributes:
+      label: Hook or extension API
+      description: Does the agent expose hooks, plugins or lifecycle events (before/after tool call, per prompt)? Link the docs and the config file format.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

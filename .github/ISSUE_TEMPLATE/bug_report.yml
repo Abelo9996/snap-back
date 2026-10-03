@@ -1,0 +1,54 @@
+name: Bug report
+description: Something snapback did wrong, or failed to do
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If snapback lost or changed files, say so in the title. Every restore records a safety
+        snapshot first: `snapback list` shows it with kind `safety`, and `snapback restore <id>`
+        brings that state back.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Ideally a script that creates a temp directory and reproduces the problem there.
+      placeholder: |
+        mkdir /tmp/sb && cd /tmp/sb
+        echo a > a.txt
+        snapback snap
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Output of the failing command, plus `snapback status`. Re-run with `SNAPBACK_DEBUG=1` for a stack trace.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: snapback version
+      placeholder: snapback --version
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS, Node and git versions
+      placeholder: macOS 15, node 22.11, git 2.47
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and capture mode
+      placeholder: Codex with `snapback wrap`, Claude Code hooks, Cursor with `snapback watch`, ...
