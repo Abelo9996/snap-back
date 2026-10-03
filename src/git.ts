@@ -4,8 +4,8 @@ export class GitMissingError extends Error {
   constructor() {
     super(
       [
-        "snapback needs git on your PATH, and it could not find it.",
-        "snapback stores snapshots in a private git repository outside your project,",
+        "snap-back needs git on your PATH, and it could not find it.",
+        "snap-back stores snapshots in a private git repository outside your project,",
         "so git is required even if your project does not use git.",
         "Install git (https://git-scm.com/downloads), open a new terminal, and run `git --version` to check.",
       ].join("\n"),
@@ -27,7 +27,7 @@ export class GitError extends Error {
 
 /**
  * Environment for every git child process. Any GIT_* variable inherited from
- * the caller (for example when snapback runs inside a git hook) could redirect
+ * the caller (for example when snap-back runs inside a git hook) could redirect
  * git at the user's own repository, so all of them are removed.
  */
 export function cleanEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {

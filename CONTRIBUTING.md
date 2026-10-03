@@ -1,13 +1,13 @@
-# Contributing to snapback
+# Contributing to snap-back
 
-Thanks for helping. snapback rewrites files in people's projects, so the bar for
+Thanks for helping. snap-back rewrites files in people's projects, so the bar for
 changes to snapshot and restore code is correctness first.
 
 ## Setup
 
 ```bash
-git clone https://github.com/Abelo9996/snapback
-cd snapback
+git clone https://github.com/Abelo9996/snap-back
+cd snap-back
 npm install        # also builds dist/ through the prepare script
 npm test           # builds, then runs the vitest suite
 npm run typecheck
@@ -18,7 +18,7 @@ Run the CLI from your checkout with `node dist/cli.js <command>` after `npm run 
 ## Ground rules
 
 - **Tests use temporary directories only.** Never point a test, or a manual
-  experiment with `undo` or `restore`, at a real project. Set `SNAPBACK_HOME` to a
+  experiment with `undo` or `restore`, at a real project. Set `SNAP_BACK_HOME` to a
   temp directory so snapshots do not land in your real storage directory.
 - **Never touch the user's `.git`.** Every git call must go through `Store.git()`
   (explicit `--git-dir` and `--work-tree`, cleaned environment). The test

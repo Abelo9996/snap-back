@@ -31,7 +31,8 @@ function listProcesses(): Promise<string[]> {
 export function matchAgents(lines: string[]): string[] {
   const found = new Set<string>();
   for (const line of lines) {
-    if (/snapback/.test(line)) continue;
+    // Skip our own processes, under the current name and the one from before the rename.
+    if (/snap-?back/.test(line)) continue;
     // First two tokens cover both `codex ...` and `node /path/to/codex ...`.
     const tokens = line.replace(/^"|"$/g, "").split(/[\s",]+/).slice(0, 2);
     for (const tok of tokens) {

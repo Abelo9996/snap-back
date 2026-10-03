@@ -3,18 +3,33 @@ import { existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+/** Name of the storage directory before the project was renamed to snap-back. */
+export const LEGACY_DIR_NAME = "snapback";
+export const DIR_NAME = "snap-back";
+
+/**
+ * The storage directory inside a platform data directory. A `snapback` directory
+ * left by an older version keeps being used, so existing snapshots stay reachable.
+ */
+export function storageDirIn(base: string): string {
+  const current = path.join(base, DIR_NAME);
+  const legacy = path.join(base, LEGACY_DIR_NAME);
+  if (!existsSync(current) && existsSync(legacy)) return legacy;
+  return current;
+}
+
 /** Root directory that holds one shadow repository per project. */
-export function dataDir(): string {
-  if (process.env.SNAPBACK_HOME) return path.resolve(process.env.SNAPBACK_HOME);
+export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
+  // SNAPBACK_HOME is the variable name from before the rename.
+  const override = env.SNAP_BACK_HOME || env.SNAPBACK_HOME;
+  if (override) return path.resolve(override);
   if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-    return path.join(base, "snapback");
+    return storageDirIn(env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"));
   }
   if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "snapback");
+    return storageDirIn(path.join(os.homedir(), "Library", "Application Support"));
   }
-  const xdg = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
-  return path.join(xdg, "snapback");
+  return storageDirIn(env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"));
 }
 
 export function canonical(p: string): string {
@@ -41,7 +56,7 @@ export function shadowDirFor(root: string): string {
 
 /**
  * Pick the project root for a working directory:
- * 1. the nearest ancestor that already has snapback snapshots,
+ * 1. the nearest ancestor that already has snap-back snapshots,
  * 2. else the nearest ancestor containing a .git entry,
  * 3. else the directory itself.
  */

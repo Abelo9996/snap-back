@@ -76,7 +76,8 @@ describe("agent detection", () => {
         "/usr/local/bin/codex --full-auto",
         "node /Users/me/.npm/bin/claude",
         "/bin/zsh -l",
-        "node /tmp/snapback/dist/cli.js watch",
+        "node /tmp/snap-back/dist/cli.js watch",
+        "node /tmp/snapback/dist/cli.js hook claude",
         '"opencode.exe","1234","Console","1","50,000 K"',
       ]),
     ).toEqual(["claude", "codex", "opencode"]);

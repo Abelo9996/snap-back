@@ -141,9 +141,11 @@ describe("snapshot and restore", () => {
 });
 
 describe("ignores", () => {
-  it("respects .gitignore, built-in ignores and .snapbackignore", async () => {
+  it("respects .gitignore, built-in ignores, .snap-back-ignore and the older .snapbackignore", async () => {
     write(root, ".gitignore", "*.log\nsecrets/\n");
-    write(root, ".snapbackignore", "scratch/\n");
+    write(root, ".snap-back-ignore", "scratch/\n");
+    write(root, ".snapbackignore", "drafts/\n");
+    write(root, "drafts/notes.md", "n");
     write(root, "app.js", "v1");
     write(root, "debug.log", "log v1");
     write(root, "secrets/key.pem", "k");
@@ -153,7 +155,7 @@ describe("ignores", () => {
     const store = await Store.open(root);
     const s1 = (await store.snapshot({ kind: "manual" }))!;
     const tracked = (await store.git(["ls-tree", "-r", "--name-only", s1.hash])).stdout.trim().split("\n").sort();
-    expect(tracked).toEqual([".gitignore", ".snapbackignore", "app.js"]);
+    expect(tracked).toEqual([".gitignore", ".snap-back-ignore", ".snapbackignore", "app.js"]);
 
     // Ignored files are never deleted or rewritten by a restore.
     write(root, "app.js", "v2");

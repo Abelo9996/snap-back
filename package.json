@@ -1,5 +1,5 @@
 {
-  "name": "snapback",
+  "name": "snap-back",
   "version": "0.1.0",
   "description": "Undo for any coding agent. Snapshots your project into a shadow git repo so one command rolls back what the agent did.",
   "type": "module",
@@ -7,7 +7,7 @@
     ".": "./dist/index.js"
   },
   "bin": {
-    "snapback": "dist/cli.js"
+    "snap-back": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -40,10 +40,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Abelo9996/snapback.git"
+    "url": "git+https://github.com/Abelo9996/snap-back.git"
   },
-  "homepage": "https://github.com/Abelo9996/snapback#readme",
-  "bugs": "https://github.com/Abelo9996/snapback/issues",
+  "homepage": "https://github.com/Abelo9996/snap-back#readme",
+  "bugs": "https://github.com/Abelo9996/snap-back/issues",
   "dependencies": {
     "cac": "^6.7.14",
     "chokidar": "^4.0.3"

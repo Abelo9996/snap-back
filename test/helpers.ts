@@ -8,7 +8,7 @@ import { realpathSync } from "node:fs";
 const made: string[] = [];
 
 /** A fresh temp directory; removed by cleanup(). */
-export function tempDir(prefix = "snapback-test-"): string {
+export function tempDir(prefix = "snap-back-test-"): string {
   const d = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
   made.push(d);
   return d;
@@ -18,10 +18,10 @@ export function cleanup(): void {
   while (made.length) rmSync(made.pop()!, { recursive: true, force: true, maxRetries: 3 });
 }
 
-/** Point snapback's storage at a temp dir for this test. */
+/** Point snap-back's storage at a temp dir for this test. */
 export function isolateHome(): string {
-  const home = tempDir("snapback-home-");
-  process.env.SNAPBACK_HOME = home;
+  const home = tempDir("snap-back-home-");
+  process.env.SNAP_BACK_HOME = home;
   return home;
 }
 

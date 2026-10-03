@@ -100,12 +100,12 @@ async function runRestore(store: Store, ref: string, paths: string[] | undefined
   }
   const res = await store.restore(ref, paths);
   out(`Done: ${res.written} restored, ${res.removed} deleted.`);
-  out(`The previous state is saved as ${bold(res.safety.id)}. To get it back: snapback restore ${res.safety.id}`);
+  out(`The previous state is saved as ${bold(res.safety.id)}. To get it back: snap-back restore ${res.safety.id}`);
   return 0;
 }
 
-const cli = cac("snapback");
-cli.option("--dir <path>", "Project directory (default: the git root or snapback project containing the cwd)");
+const cli = cac("snap-back");
+cli.option("--dir <path>", "Project directory (default: the git root or snap-back project containing the cwd)");
 
 cli
   .command("snap", "Take a snapshot now")
@@ -133,7 +133,7 @@ cli
       return;
     }
     if (!list.length) {
-      out("No snapshots yet. Take one with `snapback snap`, or start `snapback watch`.");
+      out("No snapshots yet. Take one with `snap-back snap`, or start `snap-back watch`.");
       return;
     }
     out(dim(`${pad("ID", 9)} ${pad("TIME", 19)} ${pad("AGO", 8)} ${pad("KIND", 11)} ${pad("FILES", 5)} LABEL`));
@@ -195,11 +195,11 @@ cli
   .action(async (opts: GlobalOpts & { debounce: number }) => {
     const store = await openStore(opts);
     const first = await store.snapshot({ kind: "watch-start", label: "watch started" });
-    err(`snapback: watching ${store.root} (baseline ${first!.id}). Ctrl-C to stop.`);
+    err(`snap-back: watching ${store.root} (baseline ${first!.id}). Ctrl-C to stop.`);
     const handle = watchProject(store, {
       debounceMs: Number(opts.debounce),
-      onSnapshot: (s) => err(`snapback: ${s.id} ${fmtTime(s.time)} ${s.filesChanged} file(s)${s.agent ? " [" + s.agent + "]" : ""}`),
-      onError: (e) => err(`snapback: snapshot failed: ${(e as Error).message}`),
+      onSnapshot: (s) => err(`snap-back: ${s.id} ${fmtTime(s.time)} ${s.filesChanged} file(s)${s.agent ? " [" + s.agent + "]" : ""}`),
+      onError: (e) => err(`snap-back: snapshot failed: ${(e as Error).message}`),
     });
     await handle.ready;
     await new Promise<void>((resolve) => {
@@ -211,17 +211,17 @@ cli
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
     });
-    err("snapback: stopped watching.");
+    err("snap-back: stopped watching.");
   });
 
 cli
-  .command("wrap", "Run an agent command between two checkpoints: snapback wrap -- <command>")
+  .command("wrap", "Run an agent command between two checkpoints: snap-back wrap -- <command>")
   .option("--interval <seconds>", "Also snapshot every N seconds while it runs (0 disables)", { default: 30 })
   .allowUnknownOptions()
   .action(async (opts: GlobalOpts & { interval: number }) => {
     const argv = opts["--"] ?? [];
     if (!argv.length) {
-      err("Usage: snapback wrap -- <agent command>   (for example: snapback wrap -- codex)");
+      err("Usage: snap-back wrap -- <agent command>   (for example: snap-back wrap -- codex)");
       process.exitCode = 1;
       return;
     }
@@ -234,10 +234,10 @@ cli
   .command("hooks <action>", "Install or remove agent hooks: hooks install|uninstall|status --agent claude")
   .option("--agent <name>", "Agent to integrate with", { default: "claude" })
   .option("--local", "Use .claude/settings.local.json (not committed) instead of .claude/settings.json")
-  .option("--command <cmd>", "Command that runs snapback inside the hook (default: auto-detected)")
+  .option("--command <cmd>", "Command that runs snap-back inside the hook (default: auto-detected)")
   .action(async (action: string, opts: GlobalOpts & { agent: string; local?: boolean; command?: string }) => {
     if (opts.agent !== "claude") {
-      err(`No hook integration for "${opts.agent}" yet. Use \`snapback wrap -- ${opts.agent}\` or \`snapback watch\` instead.`);
+      err(`No hook integration for "${opts.agent}" yet. Use \`snap-back wrap -- ${opts.agent}\` or \`snap-back watch\` instead.`);
       process.exitCode = 1;
       return;
     }
@@ -245,20 +245,21 @@ cli
     if (action === "install") {
       const r = installClaudeHooks(root, { local: opts.local, command: opts.command });
       if (!r.added.length) {
-        out(`snapback hooks are already installed in ${r.file}`);
+        out(`snap-back hooks are already installed in ${r.file}`);
         return;
       }
-      out(`Added snapback hooks (${r.added.join(", ")}) to ${r.file}`);
+      out(`Added snap-back hooks (${r.added.join(", ")}) to ${r.file}`);
+      if (r.replaced) out(`Replaced ${r.replaced} hook(s) from an earlier install that used a different command.`);
       if (r.backup) out(`Backup of the previous file: ${r.backup}`);
       out(`Hook command: ${r.command}`);
       if (runningFromNpxCache() && !opts.command) {
-        out(yellow("Note: snapback is running from the npx cache, so the hook points into that cache."));
-        out(yellow("For a stable hook, run `npm install -g github:Abelo9996/snapback` and then reinstall the hooks."));
+        out(yellow("Note: snap-back is running from the npx cache, so the hook points into that cache."));
+        out(yellow("For a stable hook, run `npm install -g github:Abelo9996/snap-back` and then reinstall the hooks."));
       }
       out("Restart Claude Code (or open /hooks) so it picks up the new hooks.");
     } else if (action === "uninstall") {
       const r = uninstallClaudeHooks(root, { local: opts.local });
-      out(r.removed ? `Removed ${r.removed} snapback hook(s) from ${r.file}` : `No snapback hooks found in ${r.file}`);
+      out(r.removed ? `Removed ${r.removed} snap-back hook(s) from ${r.file}` : `No snap-back hooks found in ${r.file}`);
       if (r.backup) out(`Backup of the previous file: ${r.backup}`);
     } else if (action === "status") {
       out(claudeHooksInstalled(root) ? "Claude Code hooks: installed" : "Claude Code hooks: not installed");
@@ -275,7 +276,7 @@ cli.command("hook <agent>", "Internal: called by agent hooks").action(async (age
     if (!process.stdin.isTTY) for await (const ch of process.stdin) chunks.push(ch as Buffer);
     if (agent === "claude") await handleClaudeHook(Buffer.concat(chunks).toString("utf8"));
   } catch (e) {
-    err(`snapback hook: ${(e as Error).message}`);
+    err(`snap-back hook: ${(e as Error).message}`);
   }
   process.exitCode = 0;
 });
@@ -303,7 +304,7 @@ cli.command("status", "Show where snapshots live and what changed since the last
   out(`git:       ${gitVersion() ?? red("not found")}`);
   const store = await Store.open(root, { create: false }).catch(() => null);
   if (!store) {
-    out("snapshots: none yet (run `snapback snap` or `snapback watch`)");
+    out("snapshots: none yet (run `snap-back snap` or `snap-back watch`)");
   } else {
     const all = await store.list();
     out(`storage:   ${store.gitDir} (${(store.diskUsage() / 1e6).toFixed(1)} MB)`);
@@ -336,10 +337,10 @@ async function main(): Promise<void> {
       return;
     }
     if (e instanceof StoreError || e instanceof UnsafeRootError) {
-      err(`snapback: ${e.message}`);
+      err(`snap-back: ${e.message}`);
     } else {
-      err(`snapback: ${(e as Error).message}`);
-      if (process.env.SNAPBACK_DEBUG) err((e as Error).stack ?? "");
+      err(`snap-back: ${(e as Error).message}`);
+      if (process.env.SNAP_BACK_DEBUG || process.env.SNAPBACK_DEBUG) err((e as Error).stack ?? "");
     }
     process.exitCode = 1;
   }

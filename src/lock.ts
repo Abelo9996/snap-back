@@ -30,7 +30,7 @@ export async function withLock<T>(lockPath: string, fn: () => Promise<T>, timeou
         continue;
       }
       if (Date.now() - start > timeoutMs) {
-        throw new Error(`Timed out waiting for lock ${lockPath}. If no snapback process is running, delete that file.`);
+        throw new Error(`Timed out waiting for lock ${lockPath}. If no snap-back process is running, delete that file.`);
       }
       await sleep(50 + Math.random() * 50);
     }

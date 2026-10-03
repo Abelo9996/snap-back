@@ -5,7 +5,11 @@ import { Store, type SnapshotKind } from "./store.js";
 
 /** Tools whose calls can change files. Matched against Claude Code's tool_name. */
 export const CLAUDE_TOOL_MATCHER = "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell";
-const MARKER = /snapback.*\bhook claude\b/;
+/**
+ * Matches hook commands written by snap-back, including the `snapback hook claude`
+ * form written before the rename, so uninstall and reinstall clean those up too.
+ */
+const MARKER = /snap-?back.*\bhook claude\b/;
 
 type HookEntry = { type?: string; command?: string; [k: string]: unknown };
 type HookGroup = { matcher?: string; hooks?: HookEntry[]; [k: string]: unknown };
@@ -15,6 +19,8 @@ export interface InstallResult {
   file: string;
   backup?: string;
   added: string[];
+  /** Entries from an earlier install with a different command that were replaced. */
+  replaced: number;
   command: string;
 }
 
@@ -46,13 +52,13 @@ export function runningFromNpxCache(): boolean {
 }
 
 /**
- * The command written into hook settings. Prefers a `snapback` on PATH that is
+ * The command written into hook settings. Prefers a `snap-back` on PATH that is
  * not npx's temporary shim, otherwise the absolute path of this script.
  */
 export function defaultHookCommand(): string {
-  const onPath = findOnPath("snapback");
-  if (onPath && !/[\\/]_npx[\\/]/.test(onPath)) return "snapback hook claude";
-  const script = canonical(process.argv[1] || "snapback");
+  const onPath = findOnPath("snap-back");
+  if (onPath && !/[\\/]_npx[\\/]/.test(onPath)) return "snap-back hook claude";
+  const script = canonical(process.argv[1] || "snap-back");
   const q = (s: string) => `"${s.replace(/\\/g, "/")}"`;
   // Plain `node` survives Node upgrades; versioned install paths do not.
   const node = findOnPath("node") ? "node" : q(process.execPath);
@@ -71,14 +77,14 @@ function readSettings(file: string): Settings {
   try {
     parsed = JSON.parse(text);
   } catch (e) {
-    throw new Error(`${file} is not valid JSON, so snapback left it unchanged. Fix it and retry. (${(e as Error).message})`);
+    throw new Error(`${file} is not valid JSON, so snap-back left it unchanged. Fix it and retry. (${(e as Error).message})`);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${file} does not contain a JSON object, so snapback left it unchanged.`);
+    throw new Error(`${file} does not contain a JSON object, so snap-back left it unchanged.`);
   }
   const s = parsed as Settings;
   if (s.hooks !== undefined && (typeof s.hooks !== "object" || s.hooks === null || Array.isArray(s.hooks))) {
-    throw new Error(`"hooks" in ${file} is not an object, so snapback left it unchanged.`);
+    throw new Error(`"hooks" in ${file} is not an object, so snap-back left it unchanged.`);
   }
   return s;
 }
@@ -86,19 +92,43 @@ function readSettings(file: string): Settings {
 function backup(file: string): string | undefined {
   if (!existsSync(file)) return undefined;
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "").replace("T", "-");
-  let dest = `${file}.snapback-backup-${stamp}`;
-  for (let i = 1; existsSync(dest); i++) dest = `${file}.snapback-backup-${stamp}-${i}`;
+  let dest = `${file}.snap-back-backup-${stamp}`;
+  for (let i = 1; existsSync(dest); i++) dest = `${file}.snap-back-backup-${stamp}-${i}`;
   copyFileSync(file, dest);
   return dest;
 }
 
-function hasSnapbackHook(groups: HookGroup[] | undefined): boolean {
-  return !!groups?.some((g) => g.hooks?.some((h) => typeof h.command === "string" && MARKER.test(h.command)));
+function isOurs(h: HookEntry): boolean {
+  return typeof h.command === "string" && MARKER.test(h.command);
+}
+
+function hasOurHook(groups: HookGroup[] | undefined): boolean {
+  return !!groups?.some((g) => g.hooks?.some(isOurs));
 }
 
 /**
- * Merge snapback's hook entries into .claude/settings.json (or settings.local.json).
+ * Remove our entries for which `drop` returns true. Groups left with no hooks are
+ * removed; groups that had no hooks to begin with are kept. Returns the count removed.
+ */
+function stripOurs(groups: HookGroup[], drop: (h: HookEntry) => boolean): { kept: HookGroup[]; removed: number } {
+  let removed = 0;
+  const kept: HookGroup[] = [];
+  for (const g of groups) {
+    const before = g.hooks?.length ?? 0;
+    const inner = (g.hooks ?? []).filter((h) => !(isOurs(h) && drop(h)));
+    removed += before - inner.length;
+    if (before === 0) kept.push(g);
+    else if (inner.length === before) kept.push(g);
+    else if (inner.length) kept.push({ ...g, hooks: inner });
+  }
+  return { kept, removed };
+}
+
+/**
+ * Merge snap-back's hook entries into .claude/settings.json (or settings.local.json).
  * Existing settings and hooks are preserved; the file is backed up before writing.
+ * Entries from an earlier install with a different command (for example the
+ * `snapback hook claude` form from before the rename) are replaced.
  */
 export function installClaudeHooks(root: string, opts: { command?: string; local?: boolean } = {}): InstallResult {
   const file = settingsFile(root, !!opts.local);
@@ -111,20 +141,24 @@ export function installClaudeHooks(root: string, opts: { command?: string; local
     ["PostToolUse", { matcher: CLAUDE_TOOL_MATCHER, hooks: [{ type: "command", command, timeout: 30 }] }],
   ];
   const added: string[] = [];
+  let replaced = 0;
   for (const [event, group] of wanted) {
     const existing = hooks[event];
     if (existing !== undefined && !Array.isArray(existing)) {
-      throw new Error(`hooks.${event} in ${file} is not an array, so snapback left the file unchanged.`);
+      throw new Error(`hooks.${event} in ${file} is not an array, so snap-back left the file unchanged.`);
     }
-    if (hasSnapbackHook(existing)) continue;
-    hooks[event] = [...(existing ?? []), group];
+    const { kept, removed } = stripOurs(existing ?? [], (h) => h.command !== command);
+    const current = hasOurHook(kept);
+    if (current && !removed) continue;
+    replaced += removed;
+    hooks[event] = current ? kept : [...kept, group];
     added.push(event);
   }
-  if (!added.length) return { file, added, command };
+  if (!added.length) return { file, added, replaced, command };
   const bak = backup(file);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
-  return { file, backup: bak, added, command };
+  return { file, backup: bak, added, replaced, command };
 }
 
 export function uninstallClaudeHooks(root: string, opts: { local?: boolean } = {}): UninstallResult {
@@ -136,14 +170,9 @@ export function uninstallClaudeHooks(root: string, opts: { local?: boolean } = {
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue;
-    const kept: HookGroup[] = [];
-    for (const g of groups) {
-      const before = g.hooks?.length ?? 0;
-      const inner = (g.hooks ?? []).filter((h) => !(typeof h.command === "string" && MARKER.test(h.command)));
-      removed += before - inner.length;
-      if (inner.length || before === 0) kept.push({ ...g, hooks: inner });
-    }
-    if (kept.length) hooks[event] = kept;
+    const r = stripOurs(groups, () => true);
+    removed += r.removed;
+    if (r.kept.length) hooks[event] = r.kept;
     else delete hooks[event];
   }
   if (!removed) return { file, removed };
@@ -157,7 +186,7 @@ export function claudeHooksInstalled(root: string): boolean {
   for (const local of [false, true]) {
     try {
       const s = readSettings(settingsFile(root, local));
-      if (Object.values(s.hooks ?? {}).some((g) => Array.isArray(g) && hasSnapbackHook(g))) return true;
+      if (Object.values(s.hooks ?? {}).some((g) => Array.isArray(g) && hasOurHook(g))) return true;
     } catch {
       // unreadable settings: report as not installed
     }

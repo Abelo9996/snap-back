@@ -56,12 +56,12 @@ function agentName(cmd: string): string {
  * while it runs, and checkpoint again when it exits.
  */
 export async function wrapCommand(store: Store, argv: string[], opts: WrapOptions = {}): Promise<WrapResult> {
-  if (!argv.length) throw new Error("Nothing to run. Usage: snapback wrap -- <agent command>");
+  if (!argv.length) throw new Error("Nothing to run. Usage: snap-back wrap -- <agent command>");
   const log = opts.log ?? (() => {});
   const agent = agentName(argv[0]);
   const cmdline = argv.join(" ");
   const start = (await store.snapshot({ kind: "wrap-start", label: `before: ${cmdline}`, agent }))!;
-  log(`snapback: checkpoint ${start.id} taken before \`${cmdline}\``);
+  log(`snap-back: checkpoint ${start.id} taken before \`${cmdline}\``);
 
   let busy: Promise<unknown> = Promise.resolve();
   const timer =
@@ -83,7 +83,7 @@ export async function wrapCommand(store: Store, argv: string[], opts: WrapOption
     const spec = spawnSpec(argv);
     const child = spawn(spec.file, spec.args, { stdio: "inherit", cwd: process.cwd(), shell: spec.shell });
     child.on("error", (e: NodeJS.ErrnoException) => {
-      log(e.code === "ENOENT" ? `snapback: command not found: ${argv[0]}` : `snapback: ${e.message}`);
+      log(e.code === "ENOENT" ? `snap-back: command not found: ${argv[0]}` : `snap-back: ${e.message}`);
       resolve(127);
     });
     child.on("exit", (code, signal) => {
@@ -102,11 +102,11 @@ export async function wrapCommand(store: Store, argv: string[], opts: WrapOption
   const changed = await store.changedBetween(start.hash, headId);
   if (changed.length) {
     log(
-      `snapback: ${agent} changed ${changed.length} file${changed.length === 1 ? "" : "s"}. ` +
-        `Review with \`snapback diff ${start.id}\`, roll back with \`snapback undo\`.`,
+      `snap-back: ${agent} changed ${changed.length} file${changed.length === 1 ? "" : "s"}. ` +
+        `Review with \`snap-back diff ${start.id}\`, roll back with \`snap-back undo\`.`,
     );
   } else {
-    log(`snapback: no file changes since checkpoint ${start.id}.`);
+    log(`snap-back: no file changes since checkpoint ${start.id}.`);
   }
   return { exitCode, start, end, changed };
 }

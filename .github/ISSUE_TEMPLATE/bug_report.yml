@@ -1,12 +1,12 @@
 name: Bug report
-description: Something snapback did wrong, or failed to do
+description: Something snap-back did wrong, or failed to do
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        If snapback lost or changed files, say so in the title. Every restore records a safety
-        snapshot first: `snapback list` shows it with kind `safety`, and `snapback restore <id>`
+        If snap-back lost or changed files, say so in the title. Every restore records a safety
+        snapshot first: `snap-back list` shows it with kind `safety`, and `snap-back restore <id>`
         brings that state back.
   - type: textarea
     id: what
@@ -23,7 +23,7 @@ body:
       placeholder: |
         mkdir /tmp/sb && cd /tmp/sb
         echo a > a.txt
-        snapback snap
+        snap-back snap
         ...
     validations:
       required: true
@@ -31,13 +31,13 @@ body:
     id: output
     attributes:
       label: Output
-      description: Output of the failing command, plus `snapback status`. Re-run with `SNAPBACK_DEBUG=1` for a stack trace.
+      description: Output of the failing command, plus `snap-back status`. Re-run with `SNAP_BACK_DEBUG=1` for a stack trace.
       render: text
   - type: input
     id: version
     attributes:
-      label: snapback version
-      placeholder: snapback --version
+      label: snap-back version
+      placeholder: snap-back --version
     validations:
       required: true
   - type: input
@@ -51,4 +51,4 @@ body:
     id: agent
     attributes:
       label: Agent and capture mode
-      placeholder: Codex with `snapback wrap`, Claude Code hooks, Cursor with `snapback watch`, ...
+      placeholder: Codex with `snap-back wrap`, Claude Code hooks, Cursor with `snap-back watch`, ...

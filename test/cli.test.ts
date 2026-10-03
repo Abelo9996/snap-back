@@ -53,7 +53,7 @@ describe("cli (built dist/cli.js)", () => {
     expect(undo.code).toBe(0);
     expect(read(root, "main.py")).toBe("print(1)\n");
     expect(existsSync(path.join(root, "added.py"))).toBe(false);
-    expect(undo.stdout).toMatch(/snapback restore [0-9a-f]{8}/);
+    expect(undo.stdout).toMatch(/snap-back restore [0-9a-f]{8}/);
   });
 
   it("refuses to restore without confirmation when not interactive", () => {

@@ -69,6 +69,17 @@ export const BUILTIN_IGNORES = [
   "Thumbs.db",
 ];
 
+/**
+ * Prefix of the bookkeeping files inside each shadow repository (lock, metadata,
+ * nested-repo list). It keeps the spelling from before the rename to snap-back so
+ * shadow repositories created by older versions keep working, and so old and new
+ * versions running at the same time still share one lock.
+ */
+const STORAGE_PREFIX = "snapback";
+
+/** Project files with extra ignore patterns. The first is the name used before the rename. */
+export const IGNORE_FILES = [".snapbackignore", ".snap-back-ignore"];
+
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 export interface Snapshot {
@@ -119,6 +130,7 @@ function parseMessage(body: string): { label: string; kind: SnapshotKind; agent?
   let kind: SnapshotKind = "manual";
   let agent: string | undefined;
   for (const line of lines) {
+    // Trailer names predate the rename to snap-back; they are part of the storage format.
     const m = /^Snapback-(Kind|Agent):\s*(.+)$/.exec(line.trim());
     if (!m) continue;
     if (m[1] === "Kind") kind = m[2].trim() as SnapshotKind;
@@ -151,7 +163,7 @@ export class Store {
     }
     if (!s.exists()) {
       if (opts.create === false) {
-        throw new StoreError(`No snapshots yet for ${s.root}. Run \`snapback snap\` to create the first one.`);
+        throw new StoreError(`No snapshots yet for ${s.root}. Run \`snap-back snap\` to create the first one.`);
       }
       await s.init();
     }
@@ -163,7 +175,7 @@ export class Store {
   }
 
   private get lockPath(): string {
-    return path.join(this.gitDir, "snapback.lock");
+    return path.join(this.gitDir, `${STORAGE_PREFIX}.lock`);
   }
 
   private async init(): Promise<void> {
@@ -182,25 +194,29 @@ export class Store {
       ["gc.auto", "0"],
       ["maintenance.auto", "false"],
       ["commit.gpgsign", "false"],
-      ["user.name", "snapback"],
-      ["user.email", "snapback@localhost"],
+      ["user.name", "snap-back"],
+      ["user.email", "snap-back@localhost"],
     ];
     for (const [k, v] of cfg) await runGit(["--git-dir", this.gitDir, "config", k, v]);
     mkdirSync(path.join(this.gitDir, "no-hooks"), { recursive: true });
     writeFileSync(
-      path.join(this.gitDir, "snapback.json"),
+      path.join(this.gitDir, `${STORAGE_PREFIX}.json`),
       JSON.stringify({ root: this.root, created: new Date().toISOString(), version: VERSION }, null, 2) + "\n",
     );
     this.refreshExcludes();
   }
 
-  /** Built-in ignores, then the project's .git/info/exclude, then .snapbackignore. */
+  /** Built-in ignores, then the project's .git/info/exclude, then .snapbackignore and .snap-back-ignore. */
   private refreshExcludes(): void {
-    const parts = ["# snapback built-in ignores", ...BUILTIN_IGNORES];
-    for (const extra of [path.join(this.root, ".git", "info", "exclude"), path.join(this.root, ".snapbackignore")]) {
+    const parts = ["# snap-back built-in ignores", ...BUILTIN_IGNORES];
+    const extras: [string, string][] = [
+      [path.join(this.root, ".git", "info", "exclude"), ".git/info/exclude"],
+      ...IGNORE_FILES.map((name): [string, string] => [path.join(this.root, name), name]),
+    ];
+    for (const [extra, name] of extras) {
       try {
         if (existsSync(extra) && statSync(extra).isFile()) {
-          parts.push(`# from ${path.basename(path.dirname(extra)) === "info" ? ".git/info/exclude" : ".snapbackignore"}`);
+          parts.push(`# from ${name}`);
           parts.push(readFileSync(extra, "utf8"));
         }
       } catch {
@@ -277,7 +293,7 @@ export class Store {
   }
 
   private get nestedFile(): string {
-    return path.join(this.gitDir, "snapback-nested-repos");
+    return path.join(this.gitDir, `${STORAGE_PREFIX}-nested-repos`);
   }
 
   private addNestedRepo(rel: string): void {
@@ -361,10 +377,10 @@ export class Store {
   /** Resolve a user-supplied id (hash prefix, or `HEAD~n`) to a snapshot. */
   async resolve(ref: string): Promise<Snapshot> {
     if (!/^[0-9a-fA-F]{4,40}$/.test(ref) && !/^HEAD(~\d+)?$/.test(ref)) {
-      throw new StoreError(`Not a snapshot id: ${ref}. Run \`snapback list\` to see ids.`);
+      throw new StoreError(`Not a snapshot id: ${ref}. Run \`snap-back list\` to see ids.`);
     }
     const r = await this.git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { allowFail: true });
-    if (r.code !== 0) throw new StoreError(`Unknown snapshot: ${ref}. Run \`snapback list\` to see ids.`);
+    if (r.code !== 0) throw new StoreError(`Unknown snapshot: ${ref}. Run \`snap-back list\` to see ids.`);
     const hash = r.stdout.trim();
     // Only accept commits that are part of this project's snapshot history.
     const anc = await this.git(["merge-base", "--is-ancestor", hash, "HEAD"], { allowFail: true });
