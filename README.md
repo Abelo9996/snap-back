@@ -1,5 +1,7 @@
 # snap-back
 
+English | [简体中文](README.zh-CN.md)
+
 Roll back whatever a coding agent did to your files with one command, without touching your own git history.
 
 snap-back snapshots your project before and during an agent's work: edits, deletions, new files, and the side effects of shell commands the agent ran. It works with any agent (Codex, Claude Code, OpenCode, Cursor, Aider, DeepSeek Harness, or a script you wrote) because it watches files, not the agent.
