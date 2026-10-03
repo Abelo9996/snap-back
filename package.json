@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Undo for any coding agent. Snapshots your project into a shadow git repo so one command rolls back what the agent did.",
   "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "bin": {
     "snapback": "dist/cli.js"
   },
