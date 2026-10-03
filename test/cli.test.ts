@@ -121,7 +121,7 @@ describe("cli (built dist/cli.js)", () => {
     expect(r.code).toBe(0);
     expect(existsSync(path.join(root, ".claude", "settings.json"))).toBe(true);
     expect(r.stderr).toContain("Warning: the hook command contains a path that exists only on this machine");
-    expect(r.stderr).toContain("npm install -g github:Abelo9996/snap-back");
+    expect(r.stderr).toContain("npm install -g @abelo9996/snap-back");
   });
 
   it("hooks install rejects --shared together with --local", () => {

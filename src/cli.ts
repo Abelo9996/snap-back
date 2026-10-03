@@ -267,12 +267,12 @@ cli
         err(yellow(`  ${r.command}`));
         err(yellow(`${rel(r.file)} is usually committed, and anyone else who uses it gets a hook that fails.`));
         err(yellow("Install snap-back globally so the hook can use the portable command `snap-back hook claude`:"));
-        err(yellow("  npm install -g github:Abelo9996/snap-back"));
+        err(yellow("  npm install -g @abelo9996/snap-back"));
         err(yellow("  snap-back hooks install --shared"));
         err(yellow("Or run `snap-back hooks install` without --shared to keep the hooks in .claude/settings.local.json."));
       } else if (r.added.length && runningFromNpxCache() && !opts.command) {
         out(yellow("Note: snap-back is running from the npx cache, so the hook points into that cache."));
-        out(yellow("For a stable hook, run `npm install -g github:Abelo9996/snap-back` and then reinstall the hooks."));
+        out(yellow("For a stable hook, run `npm install -g @abelo9996/snap-back` and then reinstall the hooks."));
       }
       if (r.scope === "local" && r.created) {
         out(`${rel(r.file)} holds personal settings. If git lists it as untracked, add it to .gitignore.`);

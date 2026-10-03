@@ -10,7 +10,7 @@ project directory. It never touches the project's own `.git`, branches, index or
 stash, so checkpointing is safe even in a repo with uncommitted work.
 
 Run it as `snap-back` if it is on PATH, otherwise as
-`npx -y github:Abelo9996/snap-back`.
+`npx -y @abelo9996/snap-back`.
 
 ## Before a risky change
 

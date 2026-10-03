@@ -1,5 +1,5 @@
 {
-  "name": "snap-back",
+  "name": "@abelo9996/snap-back",
   "version": "0.1.0",
   "description": "Undo for any coding agent. Snapshots your project into a shadow git repo so one command rolls back what the agent did.",
   "type": "module",
@@ -53,5 +53,8 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

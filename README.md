@@ -14,17 +14,17 @@ Requires Node 20 or newer and git on your PATH.
 
 ```bash
 # Run your agent between two checkpoints
-npx github:Abelo9996/snap-back wrap -- codex
+npx @abelo9996/snap-back wrap -- codex
 
 # Didn't like the result? See what it changed, then roll it back
-npx github:Abelo9996/snap-back diff
-npx github:Abelo9996/snap-back undo
+npx @abelo9996/snap-back diff
+npx @abelo9996/snap-back undo
 ```
 
 `undo` shows the files it will restore and delete and asks before changing anything. To stop typing `npx github:...`, install it once:
 
 ```bash
-npm install -g github:Abelo9996/snap-back
+npm install -g @abelo9996/snap-back
 snap-back undo
 ```
 
@@ -93,7 +93,7 @@ The hooks run `snap-back hook claude` on `UserPromptSubmit`, `PreToolUse` and `P
 
 By default the hooks go into `.claude/settings.local.json`, which holds your personal settings and is not meant to be committed. If git lists it as untracked, add it to `.gitignore`. Use `--shared` to write `.claude/settings.json`, which projects usually commit, when everyone on the project should get the hooks.
 
-If snap-back is not installed globally, the hook command points at the absolute path of the copy you ran (for `npx`, a directory in the npx cache). That path exists only on your machine, so `--shared` prints a warning in that case. Run `npm install -g github:Abelo9996/snap-back` first to get the portable `snap-back hook claude` command, then install the hooks. Use `--command <cmd>` to set the command yourself.
+If snap-back is not installed globally, the hook command points at the absolute path of the copy you ran (for `npx`, a directory in the npx cache). That path exists only on your machine, so `--shared` prints a warning in that case. Run `npm install -g @abelo9996/snap-back` first to get the portable `snap-back hook claude` command, then install the hooks. Use `--command <cmd>` to set the command yourself.
 
 `uninstall` takes `--shared` or `--local` to clean only one file. Reinstalling replaces hook entries from an earlier install that used a different command, including the `snapback hook claude` form from before the rename.
 
