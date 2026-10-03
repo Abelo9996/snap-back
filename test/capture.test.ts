@@ -56,9 +56,20 @@ describe("watch", () => {
     const h = watchProject(store, { debounceMs: 300, detectAgent: false });
     await h.ready;
     try {
-      writeFileSync(path.join(root, "a.txt"), "1");
-      writeFileSync(path.join(root, "b.txt"), "1");
-      await waitFor(async () => (await store.list()).some((s) => s.kind === "watch"));
+      // macOS FSEvents can drop events that land right after the watcher reports ready,
+      // so give it a moment and rewrite the same two files until a watch snapshot appears.
+      await new Promise((r) => setTimeout(r, 500));
+      let n = 0;
+      let last = 0;
+      await waitFor(async () => {
+        if (Date.now() - last > 2_000) {
+          n += 1;
+          writeFileSync(path.join(root, "a.txt"), String(n));
+          writeFileSync(path.join(root, "b.txt"), String(n));
+          last = Date.now();
+        }
+        return (await store.list()).some((s) => s.kind === "watch");
+      }, 25_000);
     } finally {
       await h.close();
     }
