@@ -122,6 +122,7 @@ Extra ignore patterns go in a `.snapbackignore` file at the project root (gitign
 ## Limitations
 
 - **Only files in the project are covered.** Database writes, network calls, deployed infrastructure, global package installs, pushed commits and messages sent cannot be undone by restoring files.
+- `undo` reverts every file change since the marker it picks, including edits you made by hand after the agent finished. It lists the files first, and the safety snapshot it records keeps your edits, so `snapback restore <safety-id> -- <path>` gets any of them back.
 - Ignored files are not snapshotted. If an agent damages something in `node_modules/` or another ignored path, reinstall or rebuild it.
 - Nested git repositories inside the project are recorded only as a pointer to their current commit, not their file contents; nested repositories with no commits are skipped.
 - File watching (`watch`) can miss changes on network filesystems and some container mounts.

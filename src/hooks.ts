@@ -54,7 +54,9 @@ export function defaultHookCommand(): string {
   if (onPath && !/[\\/]_npx[\\/]/.test(onPath)) return "snapback hook claude";
   const script = canonical(process.argv[1] || "snapback");
   const q = (s: string) => `"${s.replace(/\\/g, "/")}"`;
-  return `${q(process.execPath)} ${q(script)} hook claude`;
+  // Plain `node` survives Node upgrades; versioned install paths do not.
+  const node = findOnPath("node") ? "node" : q(process.execPath);
+  return `${node} ${q(script)} hook claude`;
 }
 
 function settingsFile(root: string, local: boolean): string {
