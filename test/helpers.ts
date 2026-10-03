@@ -38,7 +38,7 @@ export function read(root: string, rel: string): string {
 export function git(cwd: string, ...args: string[]): string {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
-  return execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], {
+  return execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0", ...args], {
     cwd,
     env,
     encoding: "utf8",
@@ -52,6 +52,8 @@ export function hashTree(dir: string): string {
   const walk = (d: string) => {
     for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const p = path.join(d, e.name);
+      // git can create and remove *.lock files in the background; they are not repository state.
+      if (e.name.endsWith(".lock")) continue;
       h.update(path.relative(dir, p) + "\0");
       if (e.isDirectory()) walk(p);
       else if (e.isFile()) h.update(readFileSync(p));
