@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { Store, type Snapshot } from "./store.js";
 
@@ -12,6 +13,38 @@ export interface WrapResult {
   start: Snapshot;
   end: Snapshot | null;
   changed: string[];
+}
+
+/** Windows: find what `cmd` resolves to through PATH and PATHEXT. */
+function resolveWindowsCommand(cmd: string): string | null {
+  const exts = (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const isFile = (p: string) => {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const candidates = (base: string) => (path.extname(base) ? [base] : exts.map((e) => base + e.toLowerCase()));
+  if (cmd.includes("/") || cmd.includes("\\")) return candidates(path.resolve(cmd)).find(isFile) ?? null;
+  for (const dir of (process.env.PATH || process.env.Path || "").split(path.delimiter)) {
+    if (!dir) continue;
+    const hit = candidates(path.join(dir, cmd)).find(isFile);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function quoteForCmd(arg: string): string {
+  return /^[A-Za-z0-9_\-.,:\/\\=@]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`;
+}
+
+/** How to spawn argv: directly, or through cmd.exe for .cmd/.bat shims on Windows. */
+function spawnSpec(argv: string[]): { file: string; args: string[]; shell: boolean } {
+  if (process.platform !== "win32") return { file: argv[0], args: argv.slice(1), shell: false };
+  const resolved = resolveWindowsCommand(argv[0]);
+  if (resolved && /\.(exe|com)$/i.test(resolved)) return { file: resolved, args: argv.slice(1), shell: false };
+  return { file: argv.map(quoteForCmd).join(" "), args: [], shell: true };
 }
 
 function agentName(cmd: string): string {
@@ -47,11 +80,8 @@ export async function wrapCommand(store: Store, argv: string[], opts: WrapOption
   process.on("SIGTERM", ignore);
 
   const exitCode = await new Promise<number>((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), {
-      stdio: "inherit",
-      cwd: process.cwd(),
-      shell: process.platform === "win32",
-    });
+    const spec = spawnSpec(argv);
+    const child = spawn(spec.file, spec.args, { stdio: "inherit", cwd: process.cwd(), shell: spec.shell });
     child.on("error", (e: NodeJS.ErrnoException) => {
       log(e.code === "ENOENT" ? `snapback: command not found: ${argv[0]}` : `snapback: ${e.message}`);
       resolve(127);

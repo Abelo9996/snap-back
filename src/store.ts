@@ -222,6 +222,10 @@ export class Store {
       // first write
     }
     if (old !== content) writeFileSync(file, content);
+    // Store and restore exact bytes: no line-ending conversion, no clean/smudge
+    // filters (git-lfs and friends), whatever the project's .gitattributes says.
+    const attrs = path.join(this.gitDir, "info", "attributes");
+    if (!existsSync(attrs)) writeFileSync(attrs, "* -text -eol -filter -ident -working-tree-encoding\n");
   }
 
   /** Run git against the shadow repo with the project as its work tree. */

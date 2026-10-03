@@ -178,6 +178,19 @@ describe("robustness", () => {
     expect(tracked).toEqual(["a.txt"]);
   });
 
+  it("restores exact bytes even when .gitattributes asks for line-ending conversion", async () => {
+    write(root, ".gitattributes", "* text eol=crlf\n");
+    write(root, "lf.txt", "line1\nline2\n");
+    write(root, "crlf.txt", "a\r\nb\r\n");
+    const store = await Store.open(root);
+    const s1 = (await store.snapshot({ kind: "manual" }))!;
+    write(root, "lf.txt", "changed");
+    write(root, "crlf.txt", "changed");
+    await store.restore(s1.id);
+    expect(read(root, "lf.txt")).toBe("line1\nline2\n");
+    expect(read(root, "crlf.txt")).toBe("a\r\nb\r\n");
+  });
+
   it("serialises concurrent snapshots from several callers", async () => {
     write(root, "a.txt", "a");
     const store = await Store.open(root);
