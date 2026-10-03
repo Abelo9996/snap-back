@@ -207,6 +207,11 @@ export class Store {
         // unreadable exclude files are not fatal
       }
     }
+    try {
+      parts.push("# nested git repositories without commits", readFileSync(this.nestedFile, "utf8"));
+    } catch {
+      // none recorded
+    }
     const content = parts.join("\n") + "\n";
     const file = path.join(this.gitDir, "info", "exclude");
     mkdirSync(path.dirname(file), { recursive: true });
@@ -247,10 +252,39 @@ export class Store {
   /** Stage the whole work tree into the shadow index and return its tree hash. Caller holds the lock. */
   private async stageTree(): Promise<string> {
     this.refreshExcludes();
-    await this.git(["add", "-A", "--ignore-errors", "."], { allowFail: true }).then((r) => {
-      if (r.code !== 0 && !/warning|error: open\(/.test(r.stderr)) throw new StoreError(`git add failed: ${r.stderr.trim()}`);
-    });
+    // A nested git repository without a commit makes `git add` fail outright.
+    // Exclude each one we hit (remembered in the shadow repo) and try again.
+    for (let attempt = 0; ; attempt++) {
+      const r = await this.git(["add", "-A", "--ignore-errors", "."], { allowFail: true });
+      if (r.code === 0) break;
+      const nested = /error: '(.+?)\/?' does not have a commit checked out/.exec(r.stderr);
+      if (nested && attempt < 50) {
+        this.addNestedRepo(nested[1]);
+        this.refreshExcludes();
+        continue;
+      }
+      if (/^fatal:/m.test(r.stderr) || !/^(warning|error): /m.test(r.stderr)) {
+        throw new StoreError(`git add failed: ${r.stderr.trim()}`);
+      }
+      // Unreadable files and similar per-file errors: snapshot everything else.
+      break;
+    }
     return (await this.git(["write-tree"])).stdout.trim();
+  }
+
+  private get nestedFile(): string {
+    return path.join(this.gitDir, "snapback-nested-repos");
+  }
+
+  private addNestedRepo(rel: string): void {
+    const line = "/" + rel.replace(/\/+$/, "") + "/";
+    let cur = "";
+    try {
+      cur = readFileSync(this.nestedFile, "utf8");
+    } catch {
+      // first entry
+    }
+    if (!cur.split("\n").includes(line)) writeFileSync(this.nestedFile, cur + line + "\n");
   }
 
   /** Tree hash for the files as they are right now (does not create a snapshot). */

@@ -167,6 +167,31 @@ describe("ignores", () => {
   });
 });
 
+describe("robustness", () => {
+  it("skips nested git repositories that have no commit instead of failing", async () => {
+    write(root, "a.txt", "a");
+    write(root, "vendor/lib/x.txt", "x");
+    git(path.join(root, "vendor/lib"), "init", "-q");
+    const store = await Store.open(root);
+    const s1 = (await store.snapshot({ kind: "manual" }))!;
+    const tracked = (await store.git(["ls-tree", "-r", "--name-only", s1.hash])).stdout.trim().split("\n");
+    expect(tracked).toEqual(["a.txt"]);
+  });
+
+  it("serialises concurrent snapshots from several callers", async () => {
+    write(root, "a.txt", "a");
+    const store = await Store.open(root);
+    await Promise.all(
+      [1, 2, 3, 4, 5].map(async (i) => {
+        write(root, `f${i}.txt`, String(i));
+        return store.snapshot({ kind: "manual", label: `c${i}` });
+      }),
+    );
+    expect((await store.list()).length).toBe(5);
+    expect(await store.pendingChanges()).toBe(0);
+  });
+});
+
 describe("the user's own git repository", () => {
   it("is never modified: HEAD, index, stash, refs and objects stay identical", async () => {
     git(root, "init", "-q");
