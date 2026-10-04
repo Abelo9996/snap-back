@@ -40,13 +40,13 @@ snap-back writes to:
   - Windows: `%LOCALAPPDATA%\snap-back\`
   - Override with `SNAP_BACK_HOME` (`SNAPBACK_HOME` is still read).
   - If a `snapback` directory from a version before the rename exists in that location, it keeps being used, so existing snapshots stay available.
-- **Files in your project, only when you run `undo` or `restore`**, and only after showing you the list and getting a yes (or `--yes`). Before every restore it records a safety snapshot of the current files, so a restore can itself be undone.
+- **Files in your project, only when you run `undo` or `restore`**, and only after showing you the list and getting a yes (or `--yes`). Before every restore it records a safety snapshot of the current files, so a restore can itself be undone. A restore never deletes a file the snapshot did not record because its ignore rules excluded it: if an agent rewrote `.gitignore` so that `.env` became visible, `undo` restores `.gitignore` and lists `.env` as kept. If you press Ctrl-C during a snapshot or restore, snap-back finishes it first, so the project is never left half-restored.
 - **`.claude/settings.local.json`, only when you run `snap-back hooks install`** (or `.claude/settings.json` with `--shared`). Existing settings are merged, never replaced, and the previous file is copied to `<file>.snap-back-backup-<timestamp>` first.
 
 snap-back never touches:
 
 - Your project's `.git` directory: no commits, branches, tags, index changes, stashes or config. Every git call uses an explicit `--git-dir` pointing at the shadow repository, and inherited `GIT_*` environment variables are stripped. The test suite hashes every file in `.git` before and after a full snapshot, restore, undo and gc cycle and requires them to be identical.
-- Files your `.gitignore` excludes, and the built-in ignores: `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `dist/`, `build/`, `out/`, `target/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.turbo/`, `.cache/`, `coverage/`, `.gradle/`, `.terraform/` and a few others (see `BUILTIN_IGNORES` in `src/store.ts`). These are never saved, so a restore never deletes or overwrites them.
+- Files your `.gitignore` excludes, and the built-in ignores (matched at any depth, like `.gitignore` patterns): `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `dist/`, `build/`, `out/`, `target/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.turbo/`, `.cache/`, `coverage/`, `.gradle/`, `.terraform/` and a few others (see `BUILTIN_IGNORES` in `src/store.ts`). These are never saved, so a restore never deletes or overwrites them.
 - Anything outside the project directory. snap-back refuses to run with your home directory or a filesystem root as the project.
 
 ## How it works
@@ -71,7 +71,7 @@ Every snapshot has a kind. `undo` rolls back to the newest "before" marker whose
 | `watch-start`, `watch` | `snap-back watch` | yes, each debounced burst |
 | `safety`, `restore` | `undo` and `restore` | `restore` |
 
-Running `undo` twice walks back two bursts. To reverse an undo, run the `snap-back restore <id>` command it printed.
+Running `undo` twice walks back two bursts. When there is nothing older, `undo` says so and changes nothing; it never re-applies what an earlier undo removed. To reverse an undo, run the `snap-back restore <id>` command it printed.
 
 ## Setup per agent
 
@@ -126,7 +126,7 @@ snap-back gc [--keep 100] [--keep-days 14] [--yes]
 snap-back status
 ```
 
-All commands accept `--dir <path>`. By default the project is the nearest directory that already has snapshots, else the nearest git root, else the current directory.
+All commands accept `--dir <path>`. By default the project is the nearest directory, starting from the current one and walking up, that already has snapshots or contains `.git`; if there is none, it is the current directory. `undo`, `restore` and `wrap` print the project directory when it is not the current one.
 
 Extra ignore patterns go in a `.snap-back-ignore` file at the project root (gitignore syntax). It is applied after the built-in list, so `!build/` there re-includes a built-in ignore. A `.snapbackignore` file from before the rename is still read.
 
@@ -135,7 +135,7 @@ Extra ignore patterns go in a `.snap-back-ignore` file at the project root (giti
 - **Only files in the project are covered.** Database writes, network calls, deployed infrastructure, global package installs, pushed commits and messages sent cannot be undone by restoring files.
 - `undo` reverts every file change since the marker it picks, including edits you made by hand after the agent finished. It lists the files first, and the safety snapshot it records keeps your edits, so `snap-back restore <safety-id> -- <path>` gets any of them back.
 - Ignored files are not snapshotted. If an agent damages something in `node_modules/` or another ignored path, reinstall or rebuild it.
-- Nested git repositories inside the project are recorded only as a pointer to their current commit, not their file contents; nested repositories with no commits are skipped.
+- Nested git repositories inside the project are recorded only as a pointer to their current commit, not their file contents; nested repositories with no commits are skipped. `undo` and `restore` list changed nested repositories as skipped instead of touching them, so if an agent deletes or rewrites one, recover it with its own git history.
 - File watching (`watch`) can miss changes on network filesystems and some container mounts.
 - Large binary files are stored in full each time they change. Run `snap-back gc` to prune old snapshots; ids of the remaining snapshots change after gc.
 - On Windows, `wrap` runs the command through the shell so `.cmd` shims resolve; quote arguments accordingly.

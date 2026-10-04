@@ -62,6 +62,10 @@ export function runGit(args: string[], opts: RunOptions = {}): Promise<RunResult
       env: cleanEnv(opts.env),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      // Own process group on POSIX, so Ctrl-C in the terminal does not kill git
+      // halfway through writing the shadow index or restoring files. snap-back
+      // itself finishes the operation and then exits (see lock.ts).
+      detached: process.platform !== "win32",
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -86,6 +90,17 @@ export function runGit(args: string[], opts: RunOptions = {}): Promise<RunResult
 }
 
 let gitVersionCache: string | null | undefined;
+
+/** [major, minor] of the installed git, or [0, 0] when unknown. */
+export function gitVersionNumber(): [number, number] {
+  const m = /^(\d+)\.(\d+)/.exec(gitVersion() ?? "");
+  return m ? [Number(m[1]), Number(m[2])] : [0, 0];
+}
+
+export function gitAtLeast(major: number, minor: number): boolean {
+  const [a, b] = gitVersionNumber();
+  return a > major || (a === major && b >= minor);
+}
 
 /** Returns the git version string, or null when git is not installed. */
 export function gitVersion(): string | null {

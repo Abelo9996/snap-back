@@ -40,13 +40,13 @@ snap-back 会写入：
   - Windows：`%LOCALAPPDATA%\snap-back\`
   - 可以用 `SNAP_BACK_HOME` 覆盖（仍然兼容读取 `SNAPBACK_HOME`）。
   - 如果该位置已经存在改名之前版本留下的 `snapback` 目录，会继续沿用它，已有的快照依然可用。
-- **项目里的文件，仅在你运行 `undo` 或 `restore` 时**，并且只会在列出文件清单、得到你的确认（或传入 `--yes`）之后才写入。每次恢复之前，它都会先给当前文件记录一个安全快照，所以恢复操作本身也可以撤销。
+- **项目里的文件，仅在你运行 `undo` 或 `restore` 时**，并且只会在列出文件清单、得到你的确认（或传入 `--yes`）之后才写入。每次恢复之前，它都会先给当前文件记录一个安全快照，所以恢复操作本身也可以撤销。恢复绝不会删除快照因忽略规则而没有记录的文件：如果智能体改写了 `.gitignore`，让 `.env` 变得可见，`undo` 会恢复 `.gitignore`，并把 `.env` 列为保留。如果你在拍快照或恢复的过程中按下 Ctrl-C，snap-back 会先把它完成，所以项目绝不会停在恢复了一半的状态。
 - **`.claude/settings.local.json`，仅在你运行 `snap-back hooks install` 时**（加 `--shared` 时则是 `.claude/settings.json`）。已有的设置会被合并而不是覆盖，并且原文件会先被复制为 `<file>.snap-back-backup-<timestamp>`。
 
 snap-back 绝不会碰：
 
 - 项目的 `.git` 目录：不会产生 commit、分支、tag、index 变更、stash，也不会改配置。每一次 git 调用都通过显式的 `--git-dir` 指向影子仓库，并且会清除继承下来的 `GIT_*` 环境变量。测试套件会在一整轮快照、恢复、撤销和 gc 前后，对 `.git` 中的每个文件计算哈希，并要求前后完全一致。
-- 被 `.gitignore` 排除的文件，以及内置忽略的目录：`node_modules/`、`.venv/`、`venv/`、`__pycache__/`、`dist/`、`build/`、`out/`、`target/`、`.next/`、`.nuxt/`、`.svelte-kit/`、`.turbo/`、`.cache/`、`coverage/`、`.gradle/`、`.terraform/` 等（完整列表见 `src/store.ts` 中的 `BUILTIN_IGNORES`）。这些内容从不保存，因此恢复时也绝不会删除或覆盖它们。
+- 被 `.gitignore` 排除的文件，以及内置忽略的目录（和 `.gitignore` 规则一样，在任意层级都匹配）：`node_modules/`、`.venv/`、`venv/`、`__pycache__/`、`dist/`、`build/`、`out/`、`target/`、`.next/`、`.nuxt/`、`.svelte-kit/`、`.turbo/`、`.cache/`、`coverage/`、`.gradle/`、`.terraform/` 等（完整列表见 `src/store.ts` 中的 `BUILTIN_IGNORES`）。这些内容从不保存，因此恢复时也绝不会删除或覆盖它们。
 - 项目目录之外的任何东西。如果把主目录或文件系统根目录当作项目，snap-back 会拒绝运行。
 
 ## 工作原理
@@ -71,7 +71,7 @@ flowchart LR
 | `watch-start`、`watch` | `snap-back watch` | 是，每段防抖后的改动都算 |
 | `safety`、`restore` | `undo` 和 `restore` | `restore` |
 
-连续运行两次 `undo` 会往回退两段改动。想撤销一次 `undo`，运行它打印出来的那条 `snap-back restore <id>` 命令即可。
+连续运行两次 `undo` 会往回退两段改动。如果已经没有更早的改动，`undo` 会直接说明并且不做任何改动，绝不会把上一次 `undo` 撤掉的内容重新应用回来。想撤销一次 `undo`，运行它打印出来的那条 `snap-back restore <id>` 命令即可。
 
 ## 各智能体的配置
 
@@ -126,7 +126,7 @@ snap-back gc [--keep 100] [--keep-days 14] [--yes]
 snap-back status
 ```
 
-所有命令都支持 `--dir <path>`。默认情况下，项目目录是最近的一个已有快照的目录；如果没有，就是最近的 git 根目录；再没有，就是当前目录。
+所有命令都支持 `--dir <path>`。默认情况下，从当前目录开始逐级向上，第一个已有快照或包含 `.git` 的目录就是项目目录；如果都没有，就是当前目录。当项目目录不是当前目录时，`undo`、`restore` 和 `wrap` 会把它打印出来。
 
 额外的忽略规则写在项目根目录的 `.snap-back-ignore` 文件里（语法与 gitignore 相同）。它在内置列表之后生效，所以在里面写 `!build/` 就能把某个内置忽略项重新包含进来。改名之前的 `.snapbackignore` 文件仍然会被读取。
 
@@ -135,7 +135,7 @@ snap-back status
 - **只覆盖项目里的文件。** 数据库写入、网络请求、已部署的基础设施、全局安装的包、已经 push 的 commit 和已经发出的消息，都无法通过恢复文件来撤销。
 - `undo` 会撤销它所选标记之后的所有文件改动，包括智能体结束后你手动做的编辑。它会先列出文件，并且它记录的安全快照会保留你的编辑，所以用 `snap-back restore <safety-id> -- <path>` 可以把其中任何一个找回来。
 - 被忽略的文件不会拍快照。如果智能体弄坏了 `node_modules/` 或其他被忽略路径里的东西，重新安装或重新构建即可。
-- 项目内嵌套的 git 仓库只会记录一个指向其当前 commit 的指针，不会记录文件内容；没有任何 commit 的嵌套仓库会被跳过。
+- 项目内嵌套的 git 仓库只会记录一个指向其当前 commit 的指针，不会记录文件内容；没有任何 commit 的嵌套仓库会被跳过。`undo` 和 `restore` 会把有变化的嵌套仓库列为跳过，而不会去动它们；如果智能体删除或改写了某个嵌套仓库，请用它自己的 git 历史来恢复。
 - 文件监听（`watch`）在网络文件系统和部分容器挂载上可能会漏掉改动。
 - 大的二进制文件每次变化都会完整存储一份。运行 `snap-back gc` 可以清理旧快照；gc 之后，剩余快照的 id 会发生变化。
 - 在 Windows 上，`wrap` 通过 shell 执行命令，以便正确解析 `.cmd` 包装脚本（shim）；参数请相应地加引号。

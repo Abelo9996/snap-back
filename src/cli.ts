@@ -12,7 +12,8 @@ import {
   uninstallClaudeHooks,
 } from "./hooks.js";
 import { findProjectRoot, UnsafeRootError } from "./paths.js";
-import { Store, StoreError, VERSION, type RestorePlan, type Snapshot } from "./store.js";
+import { InterruptedError } from "./lock.js";
+import { Store, StoreError, VERSION, type RestorePlan, type RestoreResult, type Snapshot } from "./store.js";
 import { watchProject } from "./watch.js";
 import { wrapCommand } from "./wrap.js";
 
@@ -23,6 +24,12 @@ const bold = (s: string) => c(1, s);
 const red = (s: string) => c(31, s);
 const green = (s: string) => c(32, s);
 const yellow = (s: string) => c(33, s);
+
+// `snap-back list | head` closes the pipe early; that is not an error.
+process.stdout.on("error", (e: NodeJS.ErrnoException) => {
+  if (e.code === "EPIPE" || e.code === "EOF") process.exit(0);
+  throw e;
+});
 
 const out = (s = "") => process.stdout.write(s + "\n");
 const err = (s = "") => process.stderr.write(s + "\n");
@@ -39,6 +46,25 @@ function rootFrom(opts: GlobalOpts): string {
 
 async function openStore(opts: GlobalOpts, create = true): Promise<Store> {
   return Store.open(rootFrom(opts), { create });
+}
+
+const NO_SNAPSHOTS_HINT = [
+  "snap-back can only roll back changes made after a checkpoint. Next time, start the agent with",
+  "`snap-back wrap -- <agent>`, keep `snap-back watch` running, or run `snap-back hooks install` for Claude Code.",
+].join("\n");
+
+/** Open an existing store, or explain that there is nothing recorded yet. Returns null after printing. */
+async function openExisting(opts: GlobalOpts, what: string): Promise<Store | null> {
+  const root = rootFrom(opts);
+  try {
+    return await Store.open(root, { create: false });
+  } catch (e) {
+    if (!(e instanceof StoreError) || !/No snapshots yet/.test(e.message)) throw e;
+    err(`snap-back: nothing to ${what}: there are no snapshots for ${root} yet.`);
+    err(NO_SNAPSHOTS_HINT);
+    process.exitCode = 1;
+    return null;
+  }
 }
 
 function pad(s: string, n: number): string {
@@ -74,6 +100,8 @@ async function confirm(question: string, opts: GlobalOpts): Promise<boolean> {
   return /^y(es)?$/i.test(answer.trim());
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 function printPlan(plan: RestorePlan, max = 30): void {
   const rows = [
     ...plan.write.map((p) => ({ p, t: green("restore") })),
@@ -83,27 +111,60 @@ function printPlan(plan: RestorePlan, max = 30): void {
   if (rows.length > max) out(dim(`  ...and ${rows.length - max} more`));
 }
 
-async function runRestore(store: Store, ref: string, paths: string[] | undefined, opts: GlobalOpts & { dryRun?: boolean }, heading: string): Promise<number> {
+function printLeftAlone(plan: RestorePlan, max = 10): void {
+  if (plan.keep.length) {
+    out("Left alone: the snapshot's ignore rules (such as its .gitignore) excluded these, so snap-back never recorded them:");
+    for (const p of plan.keep.slice(0, max)) out(`  ${yellow("keep   ")}  ${p}`);
+    if (plan.keep.length > max) out(dim(`  ...and ${plan.keep.length - max} more`));
+  }
+  if (plan.nested.length) {
+    out("Not restored: nested git repositories. snap-back records only their commit, not their files:");
+    for (const p of plan.nested.slice(0, max)) out(`  ${yellow("skip   ")}  ${p}/`);
+    if (plan.nested.length > max) out(dim(`  ...and ${plan.nested.length - max} more`));
+  }
+}
+
+async function runRestore(
+  store: Store,
+  ref: string,
+  paths: string[] | undefined,
+  opts: GlobalOpts & { dryRun?: boolean },
+  heading: string,
+  undo = false,
+): Promise<number> {
   const plan = await store.planRestore(ref, paths);
   out(heading);
+  if (store.root !== process.cwd()) out(dim(`Project: ${store.root}`));
   if (!plan.write.length && !plan.remove.length) {
+    printLeftAlone(plan);
     out("Files already match that snapshot. Nothing to do.");
     return 0;
   }
-  out(`${plan.write.length} file(s) to restore, ${plan.remove.length} file(s) to delete:`);
+  out(`${plural(plan.write.length, "file")} to restore, ${plural(plan.remove.length, "file")} to delete:`);
   printPlan(plan);
+  printLeftAlone(plan);
   if (opts.dryRun) {
     out(dim("Dry run: nothing changed."));
     return 0;
   }
+  out(dim("Your current files are saved as a safety snapshot first, so this can be reversed."));
   if (!(await confirm("Proceed?", opts))) {
     out("Cancelled. Nothing changed.");
     return 1;
   }
-  const res = await store.restore(ref, paths);
+  let res: RestoreResult;
+  let code = 0;
+  try {
+    res = await store.restore(ref, paths, { undo });
+  } catch (e) {
+    if (!(e instanceof InterruptedError)) throw e;
+    res = e.value as RestoreResult;
+    err("snap-back: interrupted, but the restore had already started, so it was completed first.");
+    code = 130;
+  }
   out(`Done: ${res.written} restored, ${res.removed} deleted.`);
-  out(`The previous state is saved as ${bold(res.safety.id)}. To get it back: snap-back restore ${res.safety.id}`);
-  return 0;
+  out(`Your files from before this ${undo ? "undo" : "restore"} are saved as ${bold(res.safety.id)}. To get them back: snap-back restore ${res.safety.id}`);
+  return code;
 }
 
 const cli = cac("snap-back");
@@ -138,11 +199,12 @@ cli
       out("No snapshots yet. Take one with `snap-back snap`, or start `snap-back watch`.");
       return;
     }
-    out(dim(`${pad("ID", 9)} ${pad("TIME", 19)} ${pad("AGO", 8)} ${pad("KIND", 11)} ${pad("FILES", 5)} LABEL`));
+    out(dim(`${pad("ID", 9)} ${pad("TIME", 19)} ${pad("AGO", 8)} ${pad("KIND", 11)} ${pad("CHANGED", 7)} LABEL`));
     for (const s of list) {
       const label = s.agent ? `${s.label} ${dim("[" + s.agent + "]")}` : s.label;
-      out(`${bold(pad(s.id, 9))} ${pad(fmtTime(s.time), 19)} ${pad(ago(s.time), 8)} ${pad(s.kind, 11)} ${pad(String(s.filesChanged), 5)} ${label}`);
+      out(`${bold(pad(s.id, 9))} ${pad(fmtTime(s.time), 19)} ${pad(ago(s.time), 8)} ${pad(s.kind, 11)} ${pad(String(s.filesChanged), 7)} ${label}`);
     }
+    out(dim("CHANGED: files that differ from the snapshot below it. Roll back the last burst with `snap-back undo`."));
   });
 
 cli
@@ -150,12 +212,13 @@ cli
   .option("--stat", "Summary only")
   .option("--name-only", "File names and status only")
   .action(async (from: string | undefined, to: string | undefined, opts: GlobalOpts & { stat?: boolean; nameOnly?: boolean }) => {
-    const store = await openStore(opts, false);
+    const store = await openExisting(opts, "diff");
+    if (!store) return;
     let base = from;
     if (!base) {
       const t = await store.undoTarget();
       if (!t) {
-        out("No changes to undo.");
+        out("No changes to undo, so nothing to compare. Use `snap-back diff <id>` to compare a snapshot from `snap-back list` with now.");
         return;
       }
       base = t.hash;
@@ -171,13 +234,20 @@ cli
   .option("-y, --yes", "Do not ask for confirmation")
   .option("--dry-run", "Show what would change without changing anything")
   .action(async (opts: GlobalOpts & { dryRun?: boolean }) => {
-    const store = await openStore(opts, false);
+    const store = await openExisting(opts, "undo");
+    if (!store) return;
     const target = await store.undoTarget();
     if (!target) {
-      out("Nothing to undo: the files match every recorded snapshot.");
+      const last = await store.lastUndo();
+      if (last && last.undo.tree === (await store.currentTree())) {
+        out(`Nothing older to undo: the last undo (${last.undo.id}, ${ago(last.undo.time)}) already went back to the oldest recorded change.`);
+        if (last.safety) out(`To reverse that undo: snap-back restore ${last.safety.id}`);
+      } else {
+        out("Nothing to undo: every checkpoint matches the current files.");
+      }
       return;
     }
-    process.exitCode = await runRestore(store, target.hash, undefined, opts, `Undo rolls back to ${describe(target)}`);
+    process.exitCode = await runRestore(store, target.hash, undefined, opts, `Undo rolls back to ${describe(target)}`, true);
   });
 
 cli
@@ -185,7 +255,8 @@ cli
   .option("-y, --yes", "Do not ask for confirmation")
   .option("--dry-run", "Show what would change without changing anything")
   .action(async (id: string, opts: GlobalOpts & { dryRun?: boolean }) => {
-    const store = await openStore(opts, false);
+    const store = await openExisting(opts, "restore");
+    if (!store) return;
     const paths = opts["--"]?.length ? store.toProjectPaths(opts["--"]) : undefined;
     const target = await store.resolve(id);
     process.exitCode = await runRestore(store, target.hash, paths, opts, `Restoring ${paths ? paths.join(", ") + " from " : ""}${describe(target)}`);
@@ -367,6 +438,11 @@ async function main(): Promise<void> {
     }
     await cli.runMatchedCommand();
   } catch (e) {
+    if (e instanceof InterruptedError) {
+      err(`snap-back: ${e.message}`);
+      process.exitCode = 130;
+      return;
+    }
     if (e instanceof GitMissingError) {
       err(e.message);
       process.exitCode = 2;

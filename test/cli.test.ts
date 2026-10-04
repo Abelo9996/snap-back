@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,6 +128,47 @@ describe("cli (built dist/cli.js)", () => {
     const r = run(["hooks", "install", "--shared", "--local"]);
     expect(r.code).toBe(1);
     expect(existsSync(path.join(root, ".claude"))).toBe(false);
+  });
+
+  it("undo with no snapshots says how to get protected next time", () => {
+    write(root, "a.txt", "1");
+    const r = run(["undo"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("no snapshots");
+    expect(r.stderr).toContain("snap-back wrap -- <agent>");
+  });
+
+  it("a second undo explains there is nothing older instead of redoing the agent's changes", () => {
+    write(root, "a.txt", "before");
+    run(["wrap", "--interval", "0", "--", process.execPath, "-e", "require('fs').writeFileSync('a.txt','agent')"]);
+    expect(run(["undo", "--yes"]).code).toBe(0);
+    expect(read(root, "a.txt")).toBe("before");
+    const again = run(["undo", "--yes"]);
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain("Nothing older to undo");
+    expect(again.stdout).toMatch(/To reverse that undo: snap-back restore [0-9a-f]{8}/);
+    expect(read(root, "a.txt")).toBe("before");
+  });
+
+  it("list labels the change count column", () => {
+    write(root, "a.txt", "1");
+    run(["snap", "-m", "first"]);
+    const r = run(["list"]);
+    expect(r.stdout).toMatch(/KIND\s+CHANGED\s+LABEL/);
+    expect(r.stdout).toContain("first");
+  });
+
+  it("exits quietly when the reader closes the pipe early", async () => {
+    write(root, "big.txt", "line of text\n".repeat(40_000));
+    run(["snap"]);
+    write(root, "big.txt", "another line\n".repeat(40_000));
+    const child = spawn(process.execPath, [CLI, "diff"], { cwd: root, env: { ...process.env, NO_COLOR: "1" } });
+    let stderr = "";
+    child.stderr.on("data", (d) => (stderr += d));
+    child.stdout.once("data", () => child.stdout.destroy());
+    const code = await new Promise<number | null>((r) => child.on("close", r));
+    expect(stderr).not.toContain("EPIPE");
+    expect(code).toBe(0);
   });
 
   it("explains a missing git and exits 2", () => {

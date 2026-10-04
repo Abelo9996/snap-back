@@ -55,23 +55,26 @@ export function shadowDirFor(root: string): string {
 }
 
 /**
- * Pick the project root for a working directory:
- * 1. the nearest ancestor that already has snap-back snapshots,
- * 2. else the nearest ancestor containing a .git entry,
- * 3. else the directory itself.
+ * Pick the project root for a working directory: the nearest ancestor (or the
+ * directory itself) that already has snap-back snapshots or contains a .git
+ * entry, else the directory itself.
+ *
+ * The nearest one wins. A snapshot taken once in a parent folder such as
+ * ~/code must not make every git repository below it part of one big project:
+ * an undo there would roll back files in unrelated repositories, and changes
+ * inside a nested repository would not be recorded at all.
  */
 export function findProjectRoot(start: string): string {
   const begin = canonical(start);
   let dir = begin;
-  let gitRoot: string | null = null;
   for (;;) {
     if (existsSync(path.join(shadowDirFor(dir), "HEAD"))) return dir;
-    if (!gitRoot && existsSync(path.join(dir, ".git"))) gitRoot = dir;
+    if (existsSync(path.join(dir, ".git"))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return gitRoot ?? begin;
+  return begin;
 }
 
 export class UnsafeRootError extends Error {}

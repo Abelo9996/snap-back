@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
 import path from "node:path";
+import { canonical } from "./paths.js";
 import { Store, type Snapshot } from "./store.js";
+
+function oneLine(s: string, max: number): string {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length > max ? flat.slice(0, max - 3) + "..." : flat;
+}
 
 export interface WrapOptions {
   intervalMs?: number;
@@ -59,9 +65,11 @@ export async function wrapCommand(store: Store, argv: string[], opts: WrapOption
   if (!argv.length) throw new Error("Nothing to run. Usage: snap-back wrap -- <agent command>");
   const log = opts.log ?? (() => {});
   const agent = agentName(argv[0]);
-  const cmdline = argv.join(" ");
+  // Labels show the command by name, not by its full path.
+  const cmdline = [path.basename(argv[0]), ...argv.slice(1)].join(" ");
   const start = (await store.snapshot({ kind: "wrap-start", label: `before: ${cmdline}`, agent }))!;
-  log(`snap-back: checkpoint ${start.id} taken before \`${cmdline}\``);
+  const where = canonical(process.cwd()) === store.root ? "" : ` of ${store.root}`;
+  log(`snap-back: checkpoint ${start.id}${where} taken before \`${oneLine(cmdline, 80)}\``);
 
   let busy: Promise<unknown> = Promise.resolve();
   const timer =
