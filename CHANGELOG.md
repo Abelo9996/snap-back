@@ -6,6 +6,20 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-05
+
+### Added
+
+- Claude Code plugin: `/plugin marketplace add Abelo9996/open-agent-lab`, then
+  `/plugin install snap-back@open-agent-lab`. It ships the skill, the commands
+  `/snap-back:undo`, `/snap-back:list` and `/snap-back:status`, and the
+  `UserPromptSubmit`, `PreToolUse` and `PostToolUse` hooks, so no settings file is
+  edited. The hooks use a global install when one is on PATH and otherwise run
+  through `npx`, and the snapshot after a tool call runs in the background.
+- Codex plugin manifest (`.codex-plugin/plugin.json`) with the skill and an icon.
+- `snap-back status` reports when the plugin's hooks last ran, and warns when
+  hooks from `snap-back hooks install` are installed as well, since both then run.
+
 ## [0.1.1] - 2026-10-04
 
 ### Fixed

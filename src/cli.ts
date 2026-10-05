@@ -50,7 +50,8 @@ async function openStore(opts: GlobalOpts, create = true): Promise<Store> {
 
 const NO_SNAPSHOTS_HINT = [
   "snap-back can only roll back changes made after a checkpoint. Next time, start the agent with",
-  "`snap-back wrap -- <agent>`, keep `snap-back watch` running, or run `snap-back hooks install` for Claude Code.",
+  "`snap-back wrap -- <agent>`, keep `snap-back watch` running, or in Claude Code install the snap-back plugin",
+  "(/plugin install snap-back@open-agent-lab) or run `snap-back hooks install`.",
 ].join("\n");
 
 /** Open an existing store, or explain that there is nothing recorded yet. Returns null after printing. */
@@ -419,7 +420,16 @@ cli.command("status", "Show where snapshots live and what changed since the last
   const installedIn = claudeHookStatus(root)
     .filter((st) => st.installed)
     .map((st) => path.relative(root, st.file).split(path.sep).join("/"));
-  out(`hooks:     Claude Code ${installedIn.length ? "installed in " + installedIn.join(" and ") : "not installed"}`);
+  const pluginRan = store?.lastPluginHook() ?? null;
+  const settings = installedIn.length ? "installed in " + installedIn.join(" and ") : "not in .claude settings";
+  if (pluginRan) {
+    out(`hooks:     Claude Code plugin (last ran ${ago(pluginRan)}); settings hooks ${settings}`);
+    if (installedIn.length) {
+      out(yellow("           Both run. Remove the settings copy with `snap-back hooks uninstall`, or disable the plugin."));
+    }
+  } else {
+    out(`hooks:     Claude Code ${installedIn.length ? settings : "not installed"}`);
+  }
 });
 
 cli.help();

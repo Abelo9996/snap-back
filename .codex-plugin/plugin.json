@@ -1,0 +1,48 @@
+{
+  "name": "snap-back",
+  "version": "0.1.2",
+  "description": "Undo for coding agents. Snapshots the project into a shadow git repository so one command rolls back what the agent did, without touching your own git history.",
+  "author": {
+    "name": "Abel Yagubyan",
+    "url": "https://github.com/Abelo9996"
+  },
+  "homepage": "https://github.com/Abelo9996/snap-back#readme",
+  "repository": "https://github.com/Abelo9996/snap-back",
+  "license": "MIT",
+  "keywords": [
+    "undo",
+    "checkpoint",
+    "snapshot",
+    "rollback",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "hooks": {},
+  "interface": {
+    "displayName": "snap-back",
+    "shortDescription": "Undo what the agent changed",
+    "longDescription": "snap-back keeps snapshots of the project in a private git repository outside the project directory, so it never touches your own .git, branches, index or stash. The plugin adds a skill that has Codex take a labelled checkpoint before risky changes (large refactors, codemods, deletions, shell commands that rewrite files) and roll back cleanly when you ask it to undo. For checkpoints around a whole Codex session, start Codex with snap-back wrap -- codex. Only files inside the project are covered: database writes, installs outside the project and pushed commits cannot be undone. Requires Node 20+ and git.",
+    "developerName": "Abel Yagubyan",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Takes labelled checkpoints of the project before risky changes",
+      "Shows what changed since any checkpoint",
+      "Rolls files back to a checkpoint, with a safety snapshot first"
+    ],
+    "websiteURL": "https://github.com/Abelo9996/snap-back",
+    "supportURL": "https://github.com/Abelo9996/snap-back/issues",
+    "privacyPolicyURL": "https://github.com/Abelo9996/snap-back/blob/main/SECURITY.md#privacy",
+    "termsOfServiceURL": "https://github.com/Abelo9996/snap-back/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Take a snap-back checkpoint, then refactor this module",
+      "Show what changed since the last snap-back checkpoint",
+      "Undo the changes from my last request with snap-back"
+    ],
+    "brandColor": "#1D5FD1",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg",
+    "screenshots": [
+      "./assets/screenshot.png"
+    ]
+  }
+}

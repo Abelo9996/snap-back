@@ -315,5 +315,8 @@ export async function handleClaudeHook(raw: string, env: NodeJS.ProcessEnv = pro
   }
   const store = await Store.open(root);
   const snap = await store.snapshot({ kind, label, agent: "claude" });
+  // Set by the Claude Code plugin's hook launcher, so `status` can report that the
+  // plugin is recording even though no settings file mentions snap-back.
+  if (env.SNAP_BACK_VIA_PLUGIN === "1") store.markPluginHook();
   return snap?.id ?? null;
 }

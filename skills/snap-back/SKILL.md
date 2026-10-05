@@ -23,11 +23,14 @@ snap-back snap -m "before: migrate auth to sessions"
 
 Checkpoint before anything that touches many files or deletes files, and before
 shell commands whose effects on the tree you cannot fully predict. You do not
-need one before every small edit. If `snap-back hooks status` reports that Claude
-Code hooks are installed, tool calls are already checkpointed automatically, but
-a labelled `snap` still makes the history easier for the user to read.
+need one before every small edit. When snap-back is installed as a Claude Code
+plugin, or `snap-back hooks status` reports that Claude Code hooks are installed,
+tool calls are already checkpointed automatically (`snap-back status` shows both),
+but a labelled `snap` still makes the history easier for the user to read.
 
-If the user asks for automatic checkpoints in Claude Code, `snap-back hooks install`
+If the user asks for automatic checkpoints in Claude Code, the simplest route is the
+plugin: `/plugin marketplace add Abelo9996/open-agent-lab`, then
+`/plugin install snap-back@open-agent-lab`. Without the plugin, `snap-back hooks install`
 adds the hooks to `.claude/settings.local.json`, which is personal and not meant to
 be committed. Only pass `--shared` (which writes the usually committed
 `.claude/settings.json`) when the user asks for the hooks to be shared with the

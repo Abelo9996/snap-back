@@ -30,6 +30,34 @@ npm install -g @abelo9996/snap-back
 snap-back undo
 ```
 
+## 作为 Claude Code 插件安装
+
+在 Claude Code 里运行：
+
+```text
+/plugin marketplace add Abelo9996/open-agent-lab
+/plugin install snap-back@open-agent-lab
+```
+
+然后运行 `/reload-plugins` 或开一个新会话。插件会加入 snap-back skill，命令 `/snap-back:undo`（先预览，再回滚最近一段改动或指定的快照 id）、`/snap-back:list` 和 `/snap-back:status`，以及和 `snap-back hooks install` 写入的相同的 `UserPromptSubmit`、`PreToolUse`、`PostToolUse` hook，不需要改任何 settings 文件。装了插件就不要再运行 `snap-back hooks install`，否则两套 hook 会同时运行。在终端里也可以：`claude plugin marketplace add Abelo9996/open-agent-lab`，然后 `claude plugin install snap-back@open-agent-lab`。需要 Claude Code 2.1.139 或更新版本、Node 20+ 和 git。
+
+hook 不需要额外安装：没有全局安装时，它通过 `npx -y @abelo9996/snap-back` 运行，第一次使用时会下载这个包。在一台 Apple M 系列笔记本上实测，经由 npx 每次 hook 调用约 0.5 秒；全局安装后约 0.2 秒，插件只要在 PATH 里找到 snap-back 就会自动使用它：
+
+```bash
+npm install -g @abelo9996/snap-back
+```
+
+每次会改文件的工具调用只需等待一个 hook，调用之后的那次快照在后台运行。
+
+## 作为 Codex 插件安装
+
+```bash
+codex plugin marketplace add Abelo9996/open-agent-lab
+codex plugin add snap-back@open-agent-lab
+```
+
+这会加入 snap-back skill，让 Codex 在有风险的改动之前打检查点，并在你要求时回滚。Codex 目前还没有 snap-back 的 hook；要在整个会话前后自动打检查点，用 `snap-back wrap -- codex` 启动它。
+
 ## 安全性：会动什么，绝不会动什么
 
 snap-back 会写入：
@@ -77,7 +105,7 @@ flowchart LR
 
 | 智能体 | 配置方式 | `undo` 的粒度 |
 | --- | --- | --- |
-| Claude Code | `snap-back hooks install --agent claude` | 上一条 prompt 带来的改动；每次 Edit、Write、MultiEdit、NotebookEdit、Bash 和 PowerShell 调用也都会打检查点 |
+| Claude Code | [插件](#作为-claude-code-插件安装)，或 `snap-back hooks install --agent claude` | 上一条 prompt 带来的改动；每次 Edit、Write、MultiEdit、NotebookEdit、Bash 和 PowerShell 调用也都会打检查点 |
 | Codex CLI | `snap-back wrap -- codex` | 整个会话，运行期间每 30 秒额外拍一次快照 |
 | OpenCode、Aider、Gemini CLI，以及任何 CLI 智能体 | `snap-back wrap -- <command>` | 整个会话 |
 | Cursor、IDE 内的智能体，以及其他任何工具 | 在终端里运行 `snap-back watch` | 每一段改动（安静 1.5 秒即视为一段结束） |

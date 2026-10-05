@@ -1,0 +1,20 @@
+{
+  "name": "snap-back",
+  "displayName": "snap-back",
+  "version": "0.1.2",
+  "description": "Undo for coding agents. Snapshots the project before each prompt and around every file-changing tool call, so /snap-back:undo rolls back what the agent did without touching your git history.",
+  "author": {
+    "name": "Abel Yagubyan",
+    "url": "https://github.com/Abelo9996"
+  },
+  "homepage": "https://github.com/Abelo9996/snap-back#readme",
+  "repository": "https://github.com/Abelo9996/snap-back",
+  "license": "MIT",
+  "keywords": [
+    "undo",
+    "checkpoint",
+    "snapshot",
+    "rollback",
+    "hooks"
+  ]
+}

@@ -30,6 +30,34 @@ npm install -g @abelo9996/snap-back
 snap-back undo
 ```
 
+## Install as a Claude Code plugin
+
+Inside Claude Code:
+
+```text
+/plugin marketplace add Abelo9996/open-agent-lab
+/plugin install snap-back@open-agent-lab
+```
+
+Then run `/reload-plugins` or start a new session. The plugin adds the snap-back skill, the commands `/snap-back:undo` (preview, then roll back the last burst or a snapshot id), `/snap-back:list` and `/snap-back:status`, and the same `UserPromptSubmit`, `PreToolUse` and `PostToolUse` hooks that `snap-back hooks install` writes, without editing any settings file. Do not also run `snap-back hooks install`, or both sets of hooks run. From a shell: `claude plugin marketplace add Abelo9996/open-agent-lab`, then `claude plugin install snap-back@open-agent-lab`. Needs Claude Code 2.1.139 or newer, Node 20+ and git.
+
+The hooks need no install step: without a global install they run `npx -y @abelo9996/snap-back`, which downloads the package on first use. Measured on an Apple M-series laptop, a hook call takes about 0.5 s through npx and about 0.2 s once snap-back is installed globally, which the plugin uses automatically when it is on PATH:
+
+```bash
+npm install -g @abelo9996/snap-back
+```
+
+A file-changing tool call waits for one hook; the snapshot after the call runs in the background.
+
+## Install as a Codex plugin
+
+```bash
+codex plugin marketplace add Abelo9996/open-agent-lab
+codex plugin add snap-back@open-agent-lab
+```
+
+This adds the snap-back skill, so Codex checkpoints before risky changes and can roll back when you ask. Codex has no snap-back hooks yet; for automatic checkpoints around a whole session, start it with `snap-back wrap -- codex`.
+
 ## Safety: what it touches and what it never touches
 
 snap-back writes to:
@@ -77,7 +105,7 @@ Running `undo` twice walks back two bursts. When there is nothing older, `undo` 
 
 | Agent | Setup | Granularity of `undo` |
 | --- | --- | --- |
-| Claude Code | `snap-back hooks install --agent claude` | the last prompt's changes; every Edit, Write, MultiEdit, NotebookEdit, Bash and PowerShell call is also checkpointed |
+| Claude Code | the [plugin](#install-as-a-claude-code-plugin), or `snap-back hooks install --agent claude` | the last prompt's changes; every Edit, Write, MultiEdit, NotebookEdit, Bash and PowerShell call is also checkpointed |
 | Codex CLI | `snap-back wrap -- codex` | the whole session, plus a snapshot every 30 s while it runs |
 | OpenCode, Aider, Gemini CLI, any CLI agent | `snap-back wrap -- <command>` | the whole session |
 | Cursor, IDE agents, anything else | `snap-back watch` in a terminal | each burst of changes (1.5 s of quiet ends a burst) |

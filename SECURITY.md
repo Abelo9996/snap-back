@@ -24,3 +24,7 @@ External side effects an agent caused (database writes, network calls, files out
 ## Supported versions
 
 Only the latest release and `main` receive fixes while the project is at 0.x.
+
+## Privacy
+
+snap-back runs only on your machine and makes no network requests. It copies the non-ignored files of your project into a shadow git repository in its own storage directory (`snap-back status` prints where) and reads Claude Code hook input only to label snapshots. Nothing is sent to the author or to any service. The Claude Code plugin downloads the package from the npm registry through `npx` unless snap-back is installed globally.

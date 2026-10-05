@@ -16,7 +16,7 @@ import { gitAtLeast, requireGit, runGit, type RunOptions, type RunResult } from 
 import { withLock } from "./lock.js";
 import { assertSafeRoot, canonical, shadowDirFor } from "./paths.js";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.1.2";
 
 export type SnapshotKind =
   | "manual"
@@ -211,6 +211,25 @@ export class Store {
 
   exists(): boolean {
     return existsSync(path.join(this.gitDir, "HEAD"));
+  }
+
+  private get pluginMarker(): string {
+    return path.join(this.gitDir, `${STORAGE_PREFIX}-plugin-hook`);
+  }
+
+  /** Record that a hook from the Claude Code plugin ran for this project. */
+  markPluginHook(now = new Date()): void {
+    writeFileSync(this.pluginMarker, now.toISOString() + "\n");
+  }
+
+  /** When a hook from the Claude Code plugin last ran for this project, or null. */
+  lastPluginHook(): Date | null {
+    try {
+      const d = new Date(readFileSync(this.pluginMarker, "utf8").trim());
+      return Number.isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
   }
 
   private get lockPath(): string {
