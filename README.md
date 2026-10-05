@@ -30,6 +30,8 @@ npm install -g @abelo9996/snap-back
 snap-back undo
 ```
 
+Homebrew (macOS and Linux): `brew install abelo9996/tap/snap-back` installs the same `snap-back` command.
+
 ## Install as a Claude Code plugin
 
 Inside Claude Code:

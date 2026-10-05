@@ -30,6 +30,8 @@ npm install -g @abelo9996/snap-back
 snap-back undo
 ```
 
+Homebrew（macOS 和 Linux）：`brew install abelo9996/tap/snap-back` 会安装同一个 `snap-back` 命令。
+
 ## 作为 Claude Code 插件安装
 
 在 Claude Code 里运行：
