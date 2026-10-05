@@ -16,5 +16,6 @@
     "snapshot",
     "rollback",
     "hooks"
-  ]
+  ],
+  "privacyPolicyUrl": "https://github.com/Abelo9996/snap-back/blob/main/SECURITY.md#privacy"
 }
