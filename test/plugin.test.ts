@@ -62,7 +62,7 @@ describe("Claude Code plugin files", () => {
     const files = readdirSync(path.join(REPO, "commands")).filter((f) => f.endsWith(".md"));
     expect(files.sort()).toEqual(["list.md", "status.md", "undo.md"]);
     for (const f of files) {
-      const text = readFileSync(path.join(REPO, "commands", f), "utf8");
+      const text = readFileSync(path.join(REPO, "commands", f), "utf8").replace(/\r\n/g, "\n");
       const front = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? "";
       expect(front, f).toMatch(/^description: \S/m);
       expect(front, f).toMatch(/^disable-model-invocation: true$/m);
