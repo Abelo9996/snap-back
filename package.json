@@ -46,7 +46,7 @@
   "bugs": "https://github.com/Abelo9996/snap-back/issues",
   "dependencies": {
     "cac": "^6.7.14",
-    "chokidar": "^4.0.3"
+    "chokidar": "^5.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.0",
