@@ -1,7 +1,7 @@
 {
   "name": "@abelo9996/snap-back",
-  "version": "0.1.2",
-  "description": "Undo for any coding agent. Snapshots your project into a shadow git repo so one command rolls back what the agent did.",
+  "version": "0.2.0",
+  "description": "Undo for any coding agent. Snapshots your project, including untracked and gitignored files, into a shadow git repo so one command rolls back what the agent did, even what editor checkpoints miss.",
   "type": "module",
   "exports": {
     ".": "./dist/index.js"
@@ -45,6 +45,7 @@
   "homepage": "https://github.com/Abelo9996/snap-back#readme",
   "bugs": "https://github.com/Abelo9996/snap-back/issues",
   "dependencies": {
+    "@resvg/resvg-wasm": "^2.6.2",
     "cac": "^6.7.14",
     "chokidar": "^4.0.3"
   },
