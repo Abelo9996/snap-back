@@ -6,7 +6,7 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-10-24
 
 The focus of this release is what built-in editor checkpoints cannot undo:
 agents with no undo of their own (Codex, Aider, Gemini CLI, Cursor CLI) and side
