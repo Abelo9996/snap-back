@@ -16,7 +16,21 @@ import { gitAtLeast, requireGit, runGit, type RunOptions, type RunResult } from 
 import { withLock } from "./lock.js";
 import { assertSafeRoot, canonical, shadowDirFor } from "./paths.js";
 
-export const VERSION = "0.1.2";
+export const VERSION = "0.2.0";
+
+/** Default per-file size cap for capturing untracked and gitignored files, in bytes. */
+export const DEFAULT_MAX_FILE_BYTES = 5 * 1024 * 1024;
+/** A gitignored directory that is not a built-in ignore is recorded rather than stored past these. */
+const DIR_MAX_BYTES = 200 * 1024 * 1024;
+const DIR_MAX_FILES = 5000;
+
+/** Resolve the per-file size cap from an explicit option or the SNAP_BACK_MAX_FILE_MB env var. */
+export function resolveMaxFileBytes(opt?: number, env: NodeJS.ProcessEnv = process.env): number {
+  if (typeof opt === "number" && opt >= 0) return opt;
+  const raw = env.SNAP_BACK_MAX_FILE_MB ?? env.SNAPBACK_MAX_FILE_MB;
+  const mb = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(mb) && mb >= 0 ? Math.round(mb * 1024 * 1024) : DEFAULT_MAX_FILE_BYTES;
+}
 
 export type SnapshotKind =
   | "manual"
@@ -94,6 +108,20 @@ export const IGNORE_FILES = [".snapbackignore", ".snap-back-ignore"];
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+/**
+ * Something present in the working tree that a snapshot did not store: a
+ * built-in-ignored directory such as `node_modules/` (too big to keep, recorded
+ * only so a restore can tell you it was there and how to rebuild it), or a file
+ * over the per-file size cap.
+ */
+export interface SkippedEntry {
+  /** Project-relative path, forward slashes; directories end with a slash. */
+  path: string;
+  /** Approximate size on disk when the snapshot was taken, in bytes. */
+  bytes: number;
+  kind: "dir" | "file";
+}
+
 export interface Snapshot {
   id: string;
   hash: string;
@@ -105,6 +133,8 @@ export interface Snapshot {
   /** For the snapshot an `undo` records after restoring: the snapshot it restored to. */
   undoOf?: string;
   filesChanged: number;
+  /** Directories and over-cap files that existed but were not stored, if recorded. */
+  skipped: SkippedEntry[];
 }
 
 export interface SnapshotInput {
@@ -122,9 +152,10 @@ export interface RestorePlan {
   /** Paths that exist now but not in the snapshot; they will be deleted. */
   remove: string[];
   /**
-   * Paths that exist now and are missing from the snapshot only because the
-   * snapshot's ignore rules excluded them (for example `.env` when an agent
-   * rewrote .gitignore). snap-back never recorded them, so it leaves them alone.
+   * Paths that exist now and are missing from the snapshot only because
+   * snap-back never records them: a built-in-ignored path such as something
+   * under `node_modules/`, a path listed in `.snapbackignore`, or a file over
+   * the size cap. snap-back leaves these alone rather than deleting them.
    */
   keep: string[];
   /**
@@ -142,6 +173,12 @@ export interface RestoreResult {
   removed: number;
   kept: number;
   nested: number;
+  /** Files written from the snapshot (same count as `written`). */
+  restoredPaths: string[];
+  /** Of those, files that did not exist just before the restore: recovered deletions. */
+  recoveredPaths: string[];
+  /** Built-in-ignored directories the snapshot recorded that are gone now, so a restore cannot bring them back. */
+  skippedGone: SkippedEntry[];
 }
 
 interface TreeChange {
@@ -161,21 +198,30 @@ function chunk<T>(arr: T[], n: number): T[][] {
   return out;
 }
 
-function parseMessage(body: string): { label: string; kind: SnapshotKind; agent?: string; undoOf?: string } {
+function parseMessage(body: string): { label: string; kind: SnapshotKind; agent?: string; undoOf?: string; skipped: SkippedEntry[] } {
   const lines = body.replace(/\r/g, "").split("\n");
   const label = lines[0] ?? "";
   let kind: SnapshotKind = "manual";
   let agent: string | undefined;
   let undoOf: string | undefined;
+  let skipped: SkippedEntry[] = [];
   for (const line of lines) {
     // Trailer names predate the rename to snap-back; they are part of the storage format.
-    const m = /^Snapback-(Kind|Agent|Undo-Of):\s*(.+)$/.exec(line.trim());
+    const m = /^Snapback-(Kind|Agent|Undo-Of|Skipped):\s*(.+)$/.exec(line.trim());
     if (!m) continue;
     if (m[1] === "Kind") kind = m[2].trim() as SnapshotKind;
     else if (m[1] === "Agent") agent = m[2].trim();
-    else undoOf = m[2].trim();
+    else if (m[1] === "Undo-Of") undoOf = m[2].trim();
+    else {
+      try {
+        const parsed = JSON.parse(m[2].trim());
+        if (Array.isArray(parsed)) skipped = parsed as SkippedEntry[];
+      } catch {
+        // an unparseable trailer is not fatal; treat it as no skipped entries
+      }
+    }
   }
-  return { label, kind, agent, undoOf };
+  return { label, kind, agent, undoOf, skipped };
 }
 
 function oneLine(s: string, max = 120): string {
@@ -186,16 +232,19 @@ function oneLine(s: string, max = 120): string {
 export class Store {
   readonly root: string;
   readonly gitDir: string;
+  /** Per-file size cap for capturing untracked and gitignored files. */
+  readonly maxFileBytes: number;
 
-  private constructor(root: string) {
+  private constructor(root: string, maxFileBytes: number) {
     this.root = canonical(root);
     this.gitDir = shadowDirFor(this.root);
+    this.maxFileBytes = maxFileBytes;
   }
 
   /** Open the store for a project root. Creates the shadow repository on first use. */
-  static async open(root: string, opts: { create?: boolean } = {}): Promise<Store> {
+  static async open(root: string, opts: { create?: boolean; maxFileBytes?: number } = {}): Promise<Store> {
     requireGit();
-    const s = new Store(root);
+    const s = new Store(root, resolveMaxFileBytes(opts.maxFileBytes));
     assertSafeRoot(s.root);
     if (!existsSync(s.root) || !statSync(s.root).isDirectory()) {
       throw new StoreError(`Project directory does not exist: ${s.root}`);
@@ -327,8 +376,18 @@ export class Store {
     return r.code === 0 ? r.stdout.trim() : null;
   }
 
-  /** Stage the whole work tree into the shadow index and return its tree hash. Caller holds the lock. */
-  private async stageTree(): Promise<string> {
+  /**
+   * Stage the whole work tree into the shadow index and return its tree hash
+   * together with what was left out. Caller holds the lock.
+   *
+   * Unlike plain git, a snapshot also stores untracked and gitignored files
+   * (that is the point: `.env`, local data, build output a shell command made),
+   * so an undo can bring them back. Only two things stay out: the built-in big
+   * directories (`node_modules/`, `dist/`, caches) and files over the size cap.
+   * Both are recorded as skipped entries so a restore can say what it could not
+   * bring back and roughly how large it was.
+   */
+  private async stageTree(): Promise<{ tree: string; skipped: SkippedEntry[] }> {
     this.refreshExcludes();
     await this.clearStaleIndexLock();
     // A nested git repository without a commit makes `git add` fail outright.
@@ -352,16 +411,131 @@ export class Store {
       // Unreadable files and similar per-file errors: snapshot everything else.
       break;
     }
-    // `git add -A` keeps files in the index once they are tracked, even after a
-    // .gitignore change makes them ignored. Drop those, so a snapshot is always
-    // exactly the files the current ignore rules allow.
-    const ignored = (await this.git(["ls-files", "-z", "-c", "-i", "--exclude-standard"], { allowFail: true })).stdout
+    const skipped = await this.captureIgnored();
+    // `git add -A` keeps files in the index once they are tracked, even after
+    // they become ignored. Drop only the ones snap-back must never store: the
+    // built-in big directories and `.snapbackignore` paths. Gitignored files are
+    // kept on purpose.
+    const trackedIgnored = (await this.git(["ls-files", "-z", "-c", "-i", "--exclude-standard"], { allowFail: true })).stdout
       .split("\0")
       .filter(Boolean);
-    if (ignored.length) {
-      await this.git(["update-index", "--force-remove", "-z", "--stdin"], { input: ignored.join("\0") + "\0" });
+    if (trackedIgnored.length) {
+      const hard = await this.hardIgnored(trackedIgnored);
+      const drop = trackedIgnored.filter((p) => hard.has(p));
+      if (drop.length) await this.git(["update-index", "--force-remove", "-z", "--stdin"], { input: drop.join("\0") + "\0" });
     }
-    return (await this.git(["write-tree"])).stdout.trim();
+    return { tree: (await this.git(["write-tree"])).stdout.trim(), skipped };
+  }
+
+  /** Size of one path on disk, or 0 if it cannot be read. Does not follow symlinks. */
+  private fileSize(rel: string): number {
+    try {
+      const st = lstatSync(path.join(this.root, rel));
+      return st.isFile() || st.isSymbolicLink() ? st.size : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Approximate size of a directory on disk, in bytes. Bounded so it never runs away. */
+  private dirSize(rel: string, limit = DIR_MAX_BYTES * 4): number {
+    let total = 0;
+    const base = path.join(this.root, rel);
+    const walk = (d: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(d, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (total >= limit) return;
+        const p = path.join(d, e.name);
+        try {
+          if (e.isDirectory()) walk(p);
+          else total += statSync(p).size;
+        } catch {
+          // ignore files removed mid-walk
+        }
+      }
+    };
+    walk(base);
+    return total;
+  }
+
+  /**
+   * Of `paths`, the ones excluded by the snapshot's hard rules alone: the
+   * built-in ignores and `.snapbackignore` (the shadow repo's info/exclude),
+   * ignoring the project's own `.gitignore`. Checked against an empty scratch
+   * work tree so only those rules apply, not any `.gitignore` in the project.
+   */
+  private async hardIgnored(paths: string[]): Promise<Set<string>> {
+    if (!paths.length) return new Set();
+    const scratch = mkdtempSync(path.join(os.tmpdir(), "snap-back-hard-"));
+    try {
+      const r = await runGit(
+        ["--git-dir", this.gitDir, "--work-tree", scratch, "check-ignore", "--no-index", "-z", "--stdin"],
+        { cwd: scratch, input: paths.join("\0") + "\0", allowFail: true },
+      );
+      return new Set(r.stdout.split("\0").filter(Boolean));
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Force into the index the untracked and gitignored files a plain `git add`
+   * leaves out, except the built-in big directories, `.snapbackignore` paths and
+   * files over the cap. Returns what was left out.
+   */
+  private async captureIgnored(): Promise<SkippedEntry[]> {
+    const entries = (await this.git(["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory"], { allowFail: true })).stdout
+      .split("\0")
+      .filter(Boolean);
+    if (!entries.length) return [];
+    const bare = (e: string) => e.replace(/\/+$/, "");
+    // Probe with the trailing slash intact: check-ignore --no-index only matches a
+    // directory-only pattern such as `node_modules/` when the queried path is a directory.
+    const hard = await this.hardIgnored(entries);
+    const skipped: SkippedEntry[] = [];
+    const force: string[] = [];
+    for (const e of entries) {
+      const isDir = e.endsWith("/");
+      if (hard.has(e)) {
+        // Built-in or .snapbackignore. Record big directories so a restore can
+        // name them; a single ignored file such as .DS_Store is just dropped.
+        if (isDir) skipped.push({ path: e, bytes: this.dirSize(bare(e)), kind: "dir" });
+        continue;
+      }
+      if (!isDir) {
+        const sz = this.fileSize(e);
+        if (sz > this.maxFileBytes) skipped.push({ path: e, bytes: sz, kind: "file" });
+        else force.push(e);
+        continue;
+      }
+      // A gitignored directory that is not a built-in: capture its files, but
+      // record the whole directory as skipped if it is unexpectedly large.
+      const inside = (await this.git(["ls-files", "-z", "-o", "-i", "--exclude-standard", "--", e], { allowFail: true })).stdout
+        .split("\0")
+        .filter(Boolean);
+      let total = 0;
+      let runaway = false;
+      const under: string[] = [];
+      for (const f of inside) {
+        const sz = this.fileSize(f);
+        total += sz;
+        if (under.length >= DIR_MAX_FILES || total > DIR_MAX_BYTES) {
+          runaway = true;
+          break;
+        }
+        if (sz > this.maxFileBytes) skipped.push({ path: f, bytes: sz, kind: "file" });
+        else under.push(f);
+      }
+      if (runaway) skipped.push({ path: e, bytes: this.dirSize(bare(e)), kind: "dir" });
+      else force.push(...under);
+    }
+    for (const group of chunk(force, 200)) await this.git(["add", "-f", "--", ...group], { allowFail: true });
+    return skipped;
   }
 
   /**
@@ -412,7 +586,7 @@ export class Store {
 
   /** Tree hash for the files as they are right now (does not create a snapshot). */
   async currentTree(): Promise<string> {
-    return withLock(this.lockPath, () => this.stageTree());
+    return withLock(this.lockPath, async () => (await this.stageTree()).tree);
   }
 
   /**
@@ -423,8 +597,8 @@ export class Store {
     return withLock(this.lockPath, () => this.snapshotLocked(input));
   }
 
-  private async snapshotLocked(input: SnapshotInput, staged?: string): Promise<Snapshot | null> {
-    const tree = staged ?? (await this.stageTree());
+  private async snapshotLocked(input: SnapshotInput, staged?: { tree: string; skipped: SkippedEntry[] }): Promise<Snapshot | null> {
+    const { tree, skipped } = staged ?? (await this.stageTree());
     const head = await this.headHash();
     if (head) {
       const headTree = (await this.git(["rev-parse", `${head}^{tree}`])).stdout.trim();
@@ -434,6 +608,7 @@ export class Store {
     const lines = [label, "", `Snapback-Kind: ${input.kind}`];
     if (input.agent) lines.push(`Snapback-Agent: ${oneLine(input.agent, 60)}`);
     if (input.undoOf) lines.push(`Snapback-Undo-Of: ${input.undoOf}`);
+    if (skipped.length) lines.push(`Snapback-Skipped: ${JSON.stringify(skipped)}`);
     const args = ["commit-tree", tree];
     if (head) args.push("-p", head);
     const hash = (await this.git(args, { input: lines.join("\n") + "\n" })).stdout.trim();
@@ -469,6 +644,7 @@ export class Store {
         agent: meta.agent,
         undoOf: meta.undoOf,
         filesChanged: m ? Number(m[1]) : 0,
+        skipped: meta.skipped,
       });
     }
     return out;
@@ -569,31 +745,19 @@ export class Store {
   }
 
   /**
-   * Of `candidates` (files that exist now but not in `targetTree`), the ones the
-   * target snapshot's .gitignore files exclude. Checked against a scratch
-   * directory holding only those .gitignore files, plus the built-in ignores.
+   * Of `candidates` (files that exist now but not in `target`), the ones
+   * snap-back would never have recorded: built-in-ignored or `.snapbackignore`
+   * paths, and files over the size cap. Their absence from the snapshot is no
+   * evidence they did not exist then, so a restore leaves them alone instead of
+   * deleting them.
    */
-  private async ignoredByTarget(targetTree: string, candidates: string[]): Promise<Set<string>> {
+  private async notRecordable(candidates: string[]): Promise<Set<string>> {
     if (!candidates.length) return new Set();
-    const listed = (await this.git(["ls-tree", "-r", "-z", "--name-only", targetTree])).stdout.split("\0");
-    const ignoreFiles = listed.filter((p) => p === ".gitignore" || p.endsWith("/.gitignore"));
-    const scratch = mkdtempSync(path.join(os.tmpdir(), "snap-back-rules-"));
-    try {
-      for (const rel of ignoreFiles) {
-        const blob = await this.git(["cat-file", "blob", `${targetTree}:${rel}`], { allowFail: true });
-        if (blob.code !== 0) continue;
-        const dest = path.join(scratch, ...rel.split("/"));
-        mkdirSync(path.dirname(dest), { recursive: true });
-        writeFileSync(dest, blob.stdout);
-      }
-      const r = await runGit(
-        ["--git-dir", this.gitDir, "--work-tree", scratch, "check-ignore", "--no-index", "-z", "--stdin"],
-        { cwd: scratch, input: candidates.join("\0") + "\0", allowFail: true },
-      );
-      return new Set(r.stdout.split("\0").filter(Boolean));
-    } finally {
-      rmSync(scratch, { recursive: true, force: true });
+    const out = await this.hardIgnored(candidates);
+    for (const p of candidates) {
+      if (!out.has(p) && this.fileSize(p) > this.maxFileBytes) out.add(p);
     }
+    return out;
   }
 
   private async computePlan(currentTree: string, target: Snapshot, paths?: string[]): Promise<RestorePlan & { added: string[] }> {
@@ -609,9 +773,9 @@ export class Store {
         if (c.status === "A") added.push(c.path);
       }
     }
-    const ignored = await this.ignoredByTarget(target.tree, candidates);
-    const remove = candidates.filter((p) => !ignored.has(p));
-    const keep = candidates.filter((p) => ignored.has(p));
+    const keepSet = await this.notRecordable(candidates);
+    const remove = candidates.filter((p) => !keepSet.has(p));
+    const keep = candidates.filter((p) => keepSet.has(p));
     return { target, write, remove, keep, nested, paths, added };
   }
 
@@ -632,8 +796,8 @@ export class Store {
   async restore(ref: string, paths?: string[], opts: { undo?: boolean } = {}): Promise<RestoreResult> {
     const target = await this.resolve(ref);
     return withLock(this.lockPath, async () => {
-      let tree = await this.stageTree();
-      const plan = await this.computePlan(tree, target, paths);
+      const staged = await this.stageTree();
+      const plan = await this.computePlan(staged.tree, target, paths);
       // Files the restore will overwrite but that are ignored right now were not
       // staged. Add them to the safety snapshot so their current bytes survive.
       const unsaved = plan.added.filter((rel) => {
@@ -646,7 +810,7 @@ export class Store {
       });
       if (unsaved.length) {
         for (const group of chunk(unsaved, 200)) await this.git(["add", "-f", "--", ...group]);
-        tree = (await this.git(["write-tree"])).stdout.trim();
+        staged.tree = (await this.git(["write-tree"])).stdout.trim();
       }
       const safety = await this.snapshotLocked(
         {
@@ -654,7 +818,7 @@ export class Store {
           label: `before restore to ${target.id}${paths?.length ? " (" + paths.join(", ") + ")" : ""}`,
           force: true,
         },
-        tree,
+        staged,
       );
       if (!safety) throw new StoreError("could not record safety snapshot");
 
@@ -676,6 +840,11 @@ export class Store {
         label: `${opts.undo ? "undo: " : ""}restored ${paths?.length ? paths.join(", ") + " from " : "to "}${target.id}`,
         undoOf: opts.undo ? target.hash : undefined,
       });
+      // Big directories the target recorded that no longer exist: a restore
+      // cannot bring them back (they were never stored), but it can say so.
+      const skippedGone = target.skipped.filter(
+        (e) => e.kind === "dir" && !existsSync(path.join(this.root, e.path.replace(/\/+$/, ""))),
+      );
       return {
         safety,
         after,
@@ -683,6 +852,9 @@ export class Store {
         removed: plan.remove.length,
         kept: plan.keep.length,
         nested: plan.nested.length,
+        restoredPaths: plan.write,
+        recoveredPaths: plan.added,
+        skippedGone,
       };
     });
   }
@@ -731,6 +903,25 @@ export class Store {
     const b = await this.resolve(toRef);
     const { write, remove } = await this.treeDiff(a.tree, b.tree);
     return [...write, ...remove].sort();
+  }
+
+  /**
+   * What changed between a snapshot and now (or another snapshot), grouped so a
+   * caller can list deletions first. Covers tracked, untracked and gitignored
+   * files alike, since a snapshot stores all three.
+   */
+  async changeSummary(fromRef: string, toRef?: string): Promise<{ deleted: string[]; added: string[]; modified: string[] }> {
+    const from = (await this.resolve(fromRef)).tree;
+    const to = toRef ? (await this.resolve(toRef)).tree : await this.currentTree();
+    const deleted: string[] = [];
+    const added: string[] = [];
+    const modified: string[] = [];
+    for (const c of await this.treeChanges(from, to)) {
+      if (c.status === "D") deleted.push(c.path);
+      else if (c.status === "A") added.push(c.path);
+      else modified.push(c.path);
+    }
+    return { deleted: deleted.sort(), added: added.sort(), modified: modified.sort() };
   }
 
   /** Number of files that differ between the latest snapshot and the current files. */

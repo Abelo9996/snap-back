@@ -1,5 +1,15 @@
-export { Store, StoreError, BOUNDARY_KINDS, BUILTIN_IGNORES, VERSION } from "./store.js";
-export type { Snapshot, SnapshotKind, RestorePlan, RestoreResult } from "./store.js";
+export {
+  Store,
+  StoreError,
+  BOUNDARY_KINDS,
+  BUILTIN_IGNORES,
+  VERSION,
+  DEFAULT_MAX_FILE_BYTES,
+  resolveMaxFileBytes,
+} from "./store.js";
+export type { Snapshot, SnapshotKind, RestorePlan, RestoreResult, SkippedEntry } from "./store.js";
+export { renderCard, writeCard } from "./card.js";
+export type { CardData } from "./card.js";
 export {
   installClaudeHooks,
   uninstallClaudeHooks,
