@@ -19,11 +19,16 @@ Run snap-back as `snap-back` if that command exists on PATH, otherwise as
 3. Otherwise apply exactly what was previewed, adding `--yes` because this is not an
    interactive terminal: `snap-back undo --yes` or `snap-back restore <id> --yes`.
    Do not apply anything other than what the preview showed.
-4. Report briefly: how many files were restored, deleted or kept, and the safety
-   snapshot id that the command printed. Give the user the exact command that
+4. Report briefly what the command printed: how many files were restored, how many
+   of them were deleted files brought back, any secret or `.env` among them, any
+   big directory it could not rebuild (with the size and rebuild command it
+   showed), and the safety snapshot id. Give the user the exact command that
    reverses this rollback (`snap-back restore <safety-id> --yes`).
 
-Only files inside the project are rolled back. Files matched by `.gitignore` and
-built-in ignores such as `node_modules/` are untouched, and database writes,
-installs, network calls or pushed commits cannot be undone. Say so if the user's
-request implies otherwise. Do not edit files yourself to imitate an undo.
+snap-back restores untracked and gitignored files (such as `.env` and local data)
+and files a shell command changed, which `/rewind` does not. It does not store the
+built-in big directories (`node_modules/`, `dist/`, caches) or files over the size
+cap; those are only recorded, so reinstall or rebuild them. Only files inside the
+project are covered, and database writes, installs, network calls or pushed commits
+cannot be undone. Say so if the user's request implies otherwise. Do not edit files
+yourself to imitate an undo.

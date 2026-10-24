@@ -62,10 +62,17 @@ snap-back restore <id> --yes -- src/  # only some paths
 Every restore first records a safety snapshot and prints its id. Tell the user
 that id: `snap-back restore <safety-id> --yes` puts everything back as it was.
 
-## What it cannot undo
+## What it covers, and what it cannot undo
 
-Only files inside the project are covered. Files matched by `.gitignore`, and
-built-in ignores such as `node_modules/`, `.venv/` and `dist/`, are neither
-saved nor deleted. Database writes, network calls, package installs outside the
-project, pushed commits and anything else outside the working tree cannot be
-rolled back; say so plainly if the user expects otherwise.
+Unlike `/rewind` and editor checkpoints, snap-back also stores untracked and
+gitignored files (such as `.env` and local data) and files changed by shell
+commands the agent ran, so `undo` can bring those back too. What it cannot undo:
+the built-in big directories (`node_modules/`, `.venv/`, `dist/`, caches) and
+files over the per-file size cap are not stored, only recorded with their size;
+an `undo` names them and, when it knows one, the rebuild command. Only files
+inside the project are covered at all. Database writes, network calls, package
+installs outside the project, pushed commits and anything else outside the
+working tree cannot be rolled back; say so plainly if the user expects otherwise.
+
+Because gitignored files such as `.env` are copied into snap-back's storage, a
+file that must never be copied there should be listed in `.snap-back-ignore`.

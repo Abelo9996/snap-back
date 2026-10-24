@@ -2,9 +2,15 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Roll back whatever a coding agent did to your files with one command, without touching your own git history.
+Roll back whatever a coding agent did to your files with one command, including what built-in editor checkpoints cannot, without touching your own git history.
 
-snap-back snapshots your project before and during an agent's work: edits, deletions, new files, and the side effects of shell commands the agent ran. It works with any agent (Codex, Claude Code, OpenCode, Cursor, Aider, DeepSeek Harness, or a script you wrote) because it watches files, not the agent.
+An agent overwrites your `.env`, deletes an untracked data file, or runs `rm -rf` through a shell command. Claude Code `/rewind` and Cursor checkpoints undo tracked edits the agent made with their own tools, but not files they never tracked and not side effects of shell commands. snap-back does. It snapshots the whole project, tracked, untracked and gitignored alike, before and during an agent's work, so one command brings it all back.
+
+It works with any agent (Codex, Claude Code, OpenCode, Cursor, Aider, Gemini CLI, or a script you wrote) because it watches files, not the agent, which also covers the agents that have no undo of their own.
+
+### When you do not need snap-back
+
+If you only use Claude Code and only ever undo edits it made through its own file tools, `/rewind` already covers that and is always on. snap-back earns its place when the agent has no native undo (Codex, Aider, Gemini CLI, Cursor CLI), or when the thing to undo is outside tracked files: a deleted untracked or gitignored file, an `rm -rf` of a data directory, a `.env` overwritten, or any file a shell command the agent ran changed.
 
 [![CI](https://github.com/Abelo9996/snap-back/actions/workflows/ci.yml/badge.svg)](https://github.com/Abelo9996/snap-back/actions/workflows/ci.yml)
 
@@ -31,6 +37,36 @@ snap-back undo
 ```
 
 Homebrew (macOS and Linux): `brew install abelo9996/tap/snap-back` installs the same `snap-back` command.
+
+No daemon running yet? `npx @abelo9996/snap-back` with no command takes a checkpoint right now and prints the one command that gives you continuous coverage for the agents it detects.
+
+## What built-in checkpoints miss
+
+Two real runs on macOS, in throwaway git repos, each with a gitignored `.env`, a gitignored data file, a plain untracked file, and `node_modules/`. Each agent was told to rewrite a tracked file, delete files, overwrite `.env` from `.env.example`, and delete files through a shell command. Then one `snap-back undo`.
+
+**Codex CLI** (`codex exec`), which has no undo of its own:
+
+```bash
+snap-back wrap -- codex exec --dangerously-bypass-approvals-and-sandbox "<destructive task>"
+# snap-back: codex changed 5 files. Review with `snap-back diff`, roll back with `snap-back undo`.
+snap-back undo --yes
+# 5 files restored, 3 deleted files brought back. Includes .env.
+```
+
+Restored: the gitignored `.env` (its real secret, not the `.env.example` the agent copied over it), the gitignored `data/cache.bin`, the untracked `scratch.out`, the deleted tracked `notes.txt`, and the rewritten `src/app.js`.
+
+**Claude Code** (`claude -p`), to show what `/rewind` would not reach:
+
+```bash
+snap-back wrap -- claude -p "<destructive task>" --dangerously-skip-permissions
+# snap-back: claude changed 4 files.
+snap-back undo --yes
+# 4 files restored, 2 deleted files brought back. Includes .env.
+```
+
+Restored: the gitignored `.env`, the gitignored `data/seed.csv`, the untracked `build.tmp`, and the rewritten `src/version.js`. The three non-tracked items are exactly what `/rewind` leaves behind, because the shell deletions happened outside the file tools it checkpoints.
+
+`undo` and `restore` print that before/after summary, name the secrets among the files, and, for a big directory too large to store such as `node_modules/`, print its size and the command to rebuild it. Add `--card` to write a small share card (SVG, plus PNG when a renderer is available).
 
 ## Install as a Claude Code plugin
 
@@ -70,14 +106,16 @@ snap-back writes to:
   - Windows: `%LOCALAPPDATA%\snap-back\`
   - Override with `SNAP_BACK_HOME` (`SNAPBACK_HOME` is still read).
   - If a `snapback` directory from a version before the rename exists in that location, it keeps being used, so existing snapshots stay available.
-- **Files in your project, only when you run `undo` or `restore`**, and only after showing you the list and getting a yes (or `--yes`). Before every restore it records a safety snapshot of the current files, so a restore can itself be undone. A restore never deletes a file the snapshot did not record because its ignore rules excluded it: if an agent rewrote `.gitignore` so that `.env` became visible, `undo` restores `.gitignore` and lists `.env` as kept. If you press Ctrl-C during a snapshot or restore, snap-back finishes it first, so the project is never left half-restored.
+- **Files in your project, only when you run `undo` or `restore`**, and only after showing you the list and getting a yes (or `--yes`). Before every restore it records a safety snapshot of the current files, so a restore can itself be undone. A restore never deletes a file snap-back never recorded (the built-in big directories, `.snapbackignore` paths, or files over the size cap); those are left exactly as they are. If you press Ctrl-C during a snapshot or restore, snap-back finishes it first, so the project is never left half-restored.
 - **`.claude/settings.local.json`, only when you run `snap-back hooks install`** (or `.claude/settings.json` with `--shared`). Existing settings are merged, never replaced, and the previous file is copied to `<file>.snap-back-backup-<timestamp>` first.
 
 snap-back never touches:
 
 - Your project's `.git` directory: no commits, branches, tags, index changes, stashes or config. Every git call uses an explicit `--git-dir` pointing at the shadow repository, and inherited `GIT_*` environment variables are stripped. The test suite hashes every file in `.git` before and after a full snapshot, restore, undo and gc cycle and requires them to be identical.
-- Files your `.gitignore` excludes, and the built-in ignores (matched at any depth, like `.gitignore` patterns): `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `dist/`, `build/`, `out/`, `target/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.turbo/`, `.cache/`, `coverage/`, `.gradle/`, `.terraform/` and a few others (see `BUILTIN_IGNORES` in `src/store.ts`). These are never saved, so a restore never deletes or overwrites them.
+- The built-in big directories (matched at any depth, like `.gitignore` patterns): `node_modules/`, `.venv/`, `venv/`, `__pycache__/`, `dist/`, `build/`, `out/`, `target/`, `.next/`, `.nuxt/`, `.svelte-kit/`, `.turbo/`, `.cache/`, `coverage/`, `.gradle/`, `.terraform/` and a few others (see `BUILTIN_IGNORES` in `src/store.ts`), paths you list in `.snap-back-ignore`, and files over the per-file size cap. These are never saved, so a restore never deletes or overwrites them. Their existence and size are recorded, so a restore can tell you one is gone and how to rebuild it. Unlike plain git, files your `.gitignore` excludes (such as `.env` and local data) **are** saved and restored, under the size cap.
 - Anything outside the project directory. snap-back refuses to run with your home directory or a filesystem root as the project.
+
+Gitignored files such as `.env` are stored in the shadow repository so they can be brought back. If a file must never be copied, even into snap-back's own storage, list it in `.snap-back-ignore`. The per-file size cap is `SNAP_BACK_MAX_FILE_MB` (default 5).
 
 ## How it works
 
@@ -89,7 +127,7 @@ flowchart LR
     G[(Your .git)] -. never read or written .- S
 ```
 
-Each snapshot is a commit in the shadow repository. Its tree is the full set of non-ignored files at that moment, so restoring is exact: modified files get their old contents back, deleted files reappear, and files that did not exist in the snapshot are removed (along with directories that become empty). Unchanged files are stored once, so frequent snapshots are cheap.
+Each snapshot is a commit in the shadow repository. Its tree is the full set of files at that moment, tracked, untracked and gitignored, minus the built-in big directories and files over the size cap, so restoring is exact: modified files get their old contents back, deleted files reappear (including untracked and gitignored ones a shell command removed), and files that did not exist in the snapshot are removed (along with directories that become empty). Unchanged files are stored once, so frequent snapshots are cheap.
 
 Every snapshot has a kind. `undo` rolls back to the newest "before" marker whose files differ from what you have now:
 
@@ -142,12 +180,14 @@ npx skills add Abelo9996/snap-back
 ## Commands
 
 ```text
+snap-back                               (no command) checkpoint now, show how to get coverage
+snap-back start                         the same zero-setup first run
 snap-back snap [-m label]               take a snapshot now
 snap-back list [-n 20] [--all] [--json] list snapshots, newest first
-snap-back diff                          what `undo` would revert
+snap-back diff                          what `undo` would revert, grouped (deletions first)
 snap-back diff <id> [<id2>] [--stat]    compare a snapshot with now, or two snapshots
-snap-back undo [--dry-run] [--yes]      roll back the last agent burst
-snap-back restore <id> [--yes] [-- <paths>...]
+snap-back undo [--dry-run] [--yes] [--card [path]]   roll back the last agent burst
+snap-back restore <id> [--yes] [--card [path]] [-- <paths>...]
                                        restore everything, or only some paths
 snap-back watch [--debounce 1500]       snapshot on file changes
 snap-back wrap [--interval 30] -- <cmd> checkpoint, run cmd, checkpoint
@@ -155,6 +195,8 @@ snap-back hooks install|uninstall|status --agent claude [--shared|--local]
 snap-back gc [--keep 100] [--keep-days 14] [--yes]
 snap-back status
 ```
+
+The per-file size cap for capturing untracked and gitignored files is `SNAP_BACK_MAX_FILE_MB` (default 5).
 
 All commands accept `--dir <path>`. By default the project is the nearest directory, starting from the current one and walking up, that already has snapshots or contains `.git`; if there is none, it is the current directory. `undo`, `restore` and `wrap` print the project directory when it is not the current one.
 
@@ -164,7 +206,7 @@ Extra ignore patterns go in a `.snap-back-ignore` file at the project root (giti
 
 - **Only files in the project are covered.** Database writes, network calls, deployed infrastructure, global package installs, pushed commits and messages sent cannot be undone by restoring files.
 - `undo` reverts every file change since the marker it picks, including edits you made by hand after the agent finished. It lists the files first, and the safety snapshot it records keeps your edits, so `snap-back restore <safety-id> -- <path>` gets any of them back.
-- Ignored files are not snapshotted. If an agent damages something in `node_modules/` or another ignored path, reinstall or rebuild it.
+- The built-in big directories (`node_modules/`, `dist/`, caches) and files over the size cap are not stored. If an agent damages something inside one, reinstall or rebuild it; `undo` names the directory and its recorded size and, when it knows one, the rebuild command. Gitignored files that are not in a built-in big directory and are under the cap are stored and restored.
 - Nested git repositories inside the project are recorded only as a pointer to their current commit, not their file contents; nested repositories with no commits are skipped. `undo` and `restore` list changed nested repositories as skipped instead of touching them, so if an agent deletes or rewrites one, recover it with its own git history.
 - File watching (`watch`) can miss changes on network filesystems and some container mounts.
 - Large binary files are stored in full each time they change. Run `snap-back gc` to prune old snapshots; ids of the remaining snapshots change after gc.

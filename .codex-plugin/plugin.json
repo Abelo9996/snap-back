@@ -1,6 +1,6 @@
 {
   "name": "snap-back",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Undo for coding agents. Snapshots the project into a shadow git repository so one command rolls back what the agent did, without touching your own git history.",
   "author": {
     "name": "Abel Yagubyan",

@@ -6,6 +6,40 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - unreleased
+
+The focus of this release is what built-in editor checkpoints cannot undo:
+agents with no undo of their own (Codex, Aider, Gemini CLI, Cursor CLI) and side
+effects outside tracked files.
+
+### Added
+
+- Snapshots now store untracked and gitignored files too, not just what a plain
+  `git add` would stage. A deleted untracked data file, a `.env` an agent
+  overwrote, or a file a shell command rewrote can all be brought back. Only the
+  built-in big directories (`node_modules/`, `dist/`, caches) and files over a
+  per-file size cap stay out.
+- `SNAP_BACK_MAX_FILE_MB` sets the per-file size cap (default 5 MB). Files over
+  the cap, and the built-in big directories, are recorded with their size so a
+  restore can say what it could not bring back.
+- `snap-back undo` and `snap-back restore` print a before/after summary: how many
+  files were restored, how many of them were deleted files brought back, the
+  secrets or env files among them, and any big directory that was too large to
+  store, with the command to rebuild it (for example `npm install`).
+- `--card [path]` on `undo` and `restore` writes a share card (SVG, plus PNG when
+  the in-process renderer and a system font are available) summarising the undo.
+- `snap-back start`, and bare `snap-back` with no command, take a checkpoint now
+  and print how to get continuous coverage, pointing agents without native undo
+  at `snap-back wrap -- <agent>`.
+- `snap-back diff` leads with a grouped overview, deletions first, across
+  tracked, untracked and gitignored files.
+
+### Changed
+
+- Restore no longer treats gitignored files as untouchable. They round-trip like
+  any other file. Files snap-back genuinely never records (built-in-ignored,
+  `.snapbackignore`, or over the size cap) are still left alone, never deleted.
+
 ## [0.1.2] - 2026-10-05
 
 ### Added
