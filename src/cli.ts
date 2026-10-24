@@ -11,11 +11,14 @@ import {
   runningFromNpxCache,
   uninstallClaudeHooks,
 } from "./hooks.js";
+import { existsSync } from "node:fs";
 import { findProjectRoot, UnsafeRootError } from "./paths.js";
 import { InterruptedError } from "./lock.js";
 import { Store, StoreError, VERSION, type RestorePlan, type RestoreResult, type Snapshot } from "./store.js";
 import { watchProject } from "./watch.js";
 import { wrapCommand } from "./wrap.js";
+import { detectAgents } from "./agents.js";
+import { formatBytes, writeCard, type CardData } from "./card.js";
 
 const useColor = !process.env.NO_COLOR && process.stdout.isTTY;
 const c = (code: number, s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -103,6 +106,77 @@ async function confirm(question: string, opts: GlobalOpts): Promise<boolean> {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** Agents that have no undo of their own, so wrapping them is the obvious way in. */
+const WRAP_AGENTS = new Set(["codex", "aider", "gemini", "cursor-agent"]);
+
+/** Paths worth naming in a restore summary: secrets and env files. */
+const SENSITIVE = /(^|\/)(\.env(\.[^/]+)?|[^/]*\.(pem|key|p12|pfx)|[^/]*secrets?[^/]*)$/i;
+
+function highlightPaths(paths: string[]): string[] {
+  return paths.filter((p) => SENSITIVE.test(p));
+}
+
+/** A command to rebuild a well-known directory that a restore could not bring back. */
+function rebuildHint(dir: string, root: string): string | null {
+  const name = dir.replace(/\/+$/, "").split("/").pop() ?? "";
+  const has = (f: string) => existsSync(path.join(root, f));
+  if (name === "node_modules") {
+    if (has("pnpm-lock.yaml")) return "pnpm install";
+    if (has("yarn.lock")) return "yarn install";
+    if (has("bun.lockb")) return "bun install";
+    return "npm install";
+  }
+  if (name === ".venv" || name === "venv") {
+    if (has("poetry.lock")) return "poetry install";
+    if (has("requirements.txt")) return "python -m venv .venv && .venv/bin/pip install -r requirements.txt";
+    return null;
+  }
+  if (name === "target" && has("Cargo.toml")) return "cargo build";
+  if ((name === "dist" || name === "build" || name === "out") && has("package.json")) return "npm run build";
+  return null;
+}
+
+function printRestoreSummary(res: RestoreResult, root: string, undo: boolean): void {
+  const highlights = [...new Set([...highlightPaths(res.restoredPaths), ...highlightPaths(res.recoveredPaths)])];
+  const bits: string[] = [`${plural(res.written, "file")} restored`];
+  if (res.recoveredPaths.length) bits.push(`${plural(res.recoveredPaths.length, "deleted file")} brought back`);
+  if (res.removed) bits.push(`${plural(res.removed, "file")} deleted`);
+  if (res.kept) bits.push(`${plural(res.kept, "file")} left alone`);
+  let line = bits.join(", ") + ".";
+  if (highlights.length) line += ` Includes ${highlights.slice(0, 3).join(", ")}${highlights.length > 3 ? ", ..." : ""}.`;
+  out(line);
+  for (const e of res.skippedGone) {
+    const hint = rebuildHint(e.path, root);
+    const size = formatBytes(e.bytes);
+    out(
+      yellow(`  ${e.path.replace(/\/+$/, "")}/ (${size}) was not stored, so it was not restored.`) +
+        (hint ? ` Rebuild it with: ${hint}` : ""),
+    );
+  }
+}
+
+async function maybeWriteCard(
+  store: Store,
+  res: RestoreResult,
+  title: string,
+  cardArg: string | boolean | undefined,
+  agent?: string,
+): Promise<void> {
+  if (!cardArg) return;
+  const base = typeof cardArg === "string" && cardArg.trim() ? cardArg : path.join(process.cwd(), "snap-back-card");
+  const data: CardData = {
+    title,
+    restored: res.written,
+    recovered: res.recoveredPaths.length,
+    highlights: [...new Set([...highlightPaths(res.restoredPaths), ...highlightPaths(res.recoveredPaths)])],
+    skipped: res.skippedGone.map((e) => ({ path: e.path, bytes: e.bytes })),
+    agent,
+    project: path.basename(store.root),
+  };
+  const written = await writeCard(data, base);
+  out(`Card: ${written.svg}${written.png ? ` and ${written.png}` : " (SVG only; PNG renderer unavailable)"}`);
+}
+
 function printPlan(plan: RestorePlan, max = 30): void {
   const rows = [
     ...plan.write.map((p) => ({ p, t: green("restore") })),
@@ -129,7 +203,7 @@ async function runRestore(
   store: Store,
   ref: string,
   paths: string[] | undefined,
-  opts: GlobalOpts & { dryRun?: boolean },
+  opts: GlobalOpts & { dryRun?: boolean; card?: string | boolean },
   heading: string,
   undo = false,
 ): Promise<number> {
@@ -163,8 +237,9 @@ async function runRestore(
     err("snap-back: interrupted, but the restore had already started, so it was completed first.");
     code = 130;
   }
-  out(`Done: ${res.written} restored, ${res.removed} deleted.`);
+  printRestoreSummary(res, store.root, undo);
   out(`Your files from before this ${undo ? "undo" : "restore"} are saved as ${bold(res.safety.id)}. To get them back: snap-back restore ${res.safety.id}`);
+  await maybeWriteCard(store, res, undo ? "snap-back undo" : "snap-back restore", opts.card);
   return code;
 }
 
@@ -226,6 +301,23 @@ cli
       err(dim(`Comparing ${t.id} (${t.label}) with the current files`));
     }
     const paths = opts["--"]?.length ? store.toProjectPaths(opts["--"]) : undefined;
+    // With no path filter and no summary flag, lead with a grouped overview so
+    // deletions and new untracked or gitignored files are obvious at a glance.
+    if (!paths && !opts.stat && !opts.nameOnly) {
+      const g = await store.changeSummary(base, to);
+      const total = g.deleted.length + g.added.length + g.modified.length;
+      if (total) {
+        out(bold(`${plural(total, "file")} changed since that snapshot:`));
+        const group = (label: string, color: (s: string) => string, items: string[]) => {
+          for (const p of items.slice(0, 20)) out(`  ${color(label)}  ${p}`);
+          if (items.length > 20) out(dim(`  ...and ${items.length - 20} more ${label} files`));
+        };
+        group("deleted ", red, g.deleted);
+        group("added   ", green, g.added);
+        group("modified", yellow, g.modified);
+        out("");
+      }
+    }
     const text = await store.diff({ from: base, to, paths, stat: opts.stat, nameOnly: opts.nameOnly, color: useColor });
     process.stdout.write(text || "No differences.\n");
   });
@@ -234,7 +326,8 @@ cli
   .command("undo", "Roll back to the snapshot before the last agent burst")
   .option("-y, --yes", "Do not ask for confirmation")
   .option("--dry-run", "Show what would change without changing anything")
-  .action(async (opts: GlobalOpts & { dryRun?: boolean }) => {
+  .option("--card [path]", "Also write a share card (SVG, plus PNG when available) summarising the undo")
+  .action(async (opts: GlobalOpts & { dryRun?: boolean; card?: string | boolean }) => {
     const store = await openExisting(opts, "undo");
     if (!store) return;
     const target = await store.undoTarget();
@@ -255,7 +348,8 @@ cli
   .command("restore <id>", "Restore files to a snapshot. Add `-- <paths>` to restore only some paths.")
   .option("-y, --yes", "Do not ask for confirmation")
   .option("--dry-run", "Show what would change without changing anything")
-  .action(async (id: string, opts: GlobalOpts & { dryRun?: boolean }) => {
+  .option("--card [path]", "Also write a share card (SVG, plus PNG when available) summarising the restore")
+  .action(async (id: string, opts: GlobalOpts & { dryRun?: boolean; card?: string | boolean }) => {
     const store = await openExisting(opts, "restore");
     if (!store) return;
     const paths = opts["--"]?.length ? store.toProjectPaths(opts["--"]) : undefined;
@@ -432,6 +526,36 @@ cli.command("status", "Show where snapshots live and what changed since the last
   }
 });
 
+cli
+  .command("start", "Snapshot now and show how to get continuous coverage (also what `snap-back` with no command does)")
+  .action(async (opts: GlobalOpts) => {
+    await firstRun(opts);
+  });
+
+async function firstRun(opts: GlobalOpts): Promise<void> {
+  const store = await openStore(opts);
+  const had = (await store.list(1)).length > 0;
+  const s = await store.snapshot({ kind: "manual", label: "snap-back start" });
+  const id = s ? s.id : (await store.list(1))[0]?.id;
+  out(`${bold("snap-back")} saved a checkpoint ${id ? bold(id) : ""} of ${store.root}.`);
+  out(dim("It stores tracked, untracked and gitignored files, so it can undo what editor checkpoints cannot."));
+  out("");
+  const agents = await detectAgents();
+  const noUndo = agents.filter((a) => WRAP_AGENTS.has(a));
+  out(bold("Get continuous coverage:"));
+  if (noUndo.length) {
+    out(`  ${green("wrap")}   Run the agent between checkpoints:  snap-back wrap -- ${noUndo[0]}`);
+    out(dim(`         Detected ${noUndo.join(", ")} running now; ${noUndo.length === 1 ? "it has" : "these have"} no undo of their own, so this is the way in.`));
+  } else {
+    out(`  ${green("wrap")}   Run an agent between checkpoints:   snap-back wrap -- codex   (or aider, gemini, cursor-agent)`);
+  }
+  out(`  ${green("watch")}  Snapshot on every file change:      snap-back watch`);
+  out(`  ${green("claude")} In Claude Code, install the plugin: /plugin install snap-back@open-agent-lab`);
+  out("");
+  out(dim(`When you want it back: snap-back diff  ->  snap-back undo`));
+  if (had) out(dim("(This project already had snapshots; the new checkpoint sits on top of them.)"));
+}
+
 cli.help();
 cli.version(VERSION);
 
@@ -442,8 +566,18 @@ async function main(): Promise<void> {
       if (cli.args.length) {
         err(`Unknown command: ${cli.args[0]}`);
         process.exitCode = 1;
+        return;
       }
-      if (!cli.options.help && !cli.options.version) cli.outputHelp();
+      if (cli.options.version) {
+        out(VERSION);
+        return;
+      }
+      if (cli.options.help) {
+        cli.outputHelp();
+        return;
+      }
+      // Bare `snap-back`: the zero-setup path. Snapshot now and point the way on.
+      await firstRun({ dir: cli.options.dir as string | undefined });
       return;
     }
     await cli.runMatchedCommand();
