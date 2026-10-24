@@ -545,7 +545,7 @@ async function firstRun(opts: GlobalOpts): Promise<void> {
   out(bold("Get continuous coverage:"));
   if (noUndo.length) {
     out(`  ${green("wrap")}   Run the agent between checkpoints:  snap-back wrap -- ${noUndo[0]}`);
-    out(dim(`         Detected ${noUndo.join(", ")} running now; ${noUndo.length === 1 ? "it has" : "these have"} no undo of their own, so this is the way in.`));
+    out(dim(`         Detected ${noUndo.join(", ")} running now; ${noUndo.length === 1 ? "it has no undo of its own" : "these have no undo of their own"}, so this is the way in.`));
   } else {
     out(`  ${green("wrap")}   Run an agent between checkpoints:   snap-back wrap -- codex   (or aider, gemini, cursor-agent)`);
   }
