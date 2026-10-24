@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withLock } from "../src/lock.js";
@@ -86,35 +86,36 @@ describe("repeated undo", () => {
   });
 });
 
-describe("restore never deletes files it never recorded", () => {
-  it("keeps files that only became visible because the agent rewrote .gitignore", async () => {
+describe("undo covers what built-in checkpoints miss", () => {
+  it("restores a gitignored .env the agent overwrote and a gitignored data file it deleted", async () => {
     write(root, ".gitignore", ".env\nlocal-data/\n");
     write(root, ".env", "API_KEY=secret\n");
     write(root, "local-data/db.sqlite", "precious");
     write(root, "app.js", "v1");
+    write(root, "node_modules/dep/index.js", "keep me"); // built-in: never recorded
     const store = await Store.open(root);
     const start = (await store.snapshot({ kind: "wrap-start" }))!;
-    write(root, ".gitignore", "node_modules/\n");
+    // The agent overwrites the gitignored secret, deletes a gitignored data file,
+    // edits a tracked file, adds a file, and touches node_modules.
+    write(root, ".env", "API_KEY=leaked\n");
+    rmSync(path.join(root, "local-data"), { recursive: true, force: true });
     write(root, "app.js", "v2");
     write(root, "agent-made.js", "x");
+    write(root, "node_modules/dep/added.js", "new dep file");
     await store.snapshot({ kind: "wrap-end" });
 
     const plan = await store.planRestore(start.hash);
     expect(plan.remove).toEqual(["agent-made.js"]);
-    expect(plan.keep.sort()).toEqual([".env", "local-data/db.sqlite"]);
+    expect(plan.write.sort()).toEqual([".env", "app.js", "local-data/db.sqlite"]);
 
     const res = await store.restore(start.hash, undefined, { undo: true });
-    expect(res.kept).toBe(2);
     expect(read(root, ".env")).toBe("API_KEY=secret\n");
     expect(read(root, "local-data/db.sqlite")).toBe("precious");
-    expect(read(root, ".gitignore")).toBe(".env\nlocal-data/\n");
     expect(read(root, "app.js")).toBe("v1");
     expect(existsSync(path.join(root, "agent-made.js"))).toBe(false);
-
-    // Back under the original rules, the ignored files leave the snapshots again.
-    const after = (await store.list())[0];
-    const tracked = (await store.git(["ls-tree", "-r", "--name-only", after.hash])).stdout.trim().split("\n");
-    expect(tracked.sort()).toEqual([".gitignore", "app.js"]);
+    // The recovered deletion is reported, and node_modules is left untouched.
+    expect(res.recoveredPaths).toContain("local-data/db.sqlite");
+    expect(read(root, "node_modules/dep/added.js")).toBe("new dep file");
   });
 
   it("saves an ignored file in the safety snapshot before overwriting it", async () => {

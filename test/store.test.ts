@@ -141,7 +141,7 @@ describe("snapshot and restore", () => {
 });
 
 describe("ignores", () => {
-  it("respects .gitignore, built-in ignores, .snap-back-ignore and the older .snapbackignore", async () => {
+  it("captures gitignored files, but leaves built-in ignores and .snapbackignore out", async () => {
     write(root, ".gitignore", "*.log\nsecrets/\n");
     write(root, ".snap-back-ignore", "scratch/\n");
     write(root, ".snapbackignore", "drafts/\n");
@@ -155,17 +155,42 @@ describe("ignores", () => {
     const store = await Store.open(root);
     const s1 = (await store.snapshot({ kind: "manual" }))!;
     const tracked = (await store.git(["ls-tree", "-r", "--name-only", s1.hash])).stdout.trim().split("\n").sort();
-    expect(tracked).toEqual([".gitignore", ".snap-back-ignore", ".snapbackignore", "app.js"]);
+    // Gitignored debug.log and secrets/ are now stored; node_modules/.venv (built-in)
+    // and scratch/ (.snap-back-ignore) and drafts/ (.snapbackignore) stay out.
+    expect(tracked).toEqual([".gitignore", ".snap-back-ignore", ".snapbackignore", "app.js", "debug.log", "secrets/key.pem"]);
 
-    // Ignored files are never deleted or rewritten by a restore.
     write(root, "app.js", "v2");
     write(root, "debug.log", "log v2");
     write(root, "node_modules/dep/added.js", "new dep file");
     await store.restore(s1.id);
+    // Gitignored files round-trip like any other file.
     expect(read(root, "app.js")).toBe("v1");
-    expect(read(root, "debug.log")).toBe("log v2");
-    expect(read(root, "node_modules/dep/added.js")).toBe("new dep file");
+    expect(read(root, "debug.log")).toBe("log v1");
     expect(read(root, "secrets/key.pem")).toBe("k");
+    // Built-in-ignored files are never deleted or rewritten by a restore.
+    expect(read(root, "node_modules/dep/added.js")).toBe("new dep file");
+  });
+
+  it("records built-in big directories as skipped, with a size", async () => {
+    write(root, "app.js", "v1");
+    write(root, "node_modules/dep/index.js", "x".repeat(2048));
+    const store = await Store.open(root);
+    const s1 = (await store.snapshot({ kind: "manual" }))!;
+    const nm = s1.skipped.find((e) => e.path.replace(/\/$/, "") === "node_modules");
+    expect(nm?.kind).toBe("dir");
+    expect(nm!.bytes).toBeGreaterThanOrEqual(2048);
+  });
+
+  it("skips files over the per-file size cap but keeps smaller ones", async () => {
+    write(root, ".gitignore", "data/\n");
+    write(root, "data/small.bin", "x".repeat(100));
+    write(root, "data/big.bin", "y".repeat(5000));
+    const store = await Store.open(root, { maxFileBytes: 1000 });
+    const s1 = (await store.snapshot({ kind: "manual" }))!;
+    const tracked = (await store.git(["ls-tree", "-r", "--name-only", s1.hash])).stdout.trim().split("\n");
+    expect(tracked).toContain("data/small.bin");
+    expect(tracked).not.toContain("data/big.bin");
+    expect(s1.skipped.some((e) => e.path === "data/big.bin" && e.kind === "file")).toBe(true);
   });
 });
 

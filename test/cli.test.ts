@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -175,5 +175,40 @@ describe("cli (built dist/cli.js)", () => {
     const r = run(["snap"], { PATH: tempDir("empty-path-") });
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("needs git");
+  });
+
+  it("bare invocation snapshots now and points to continuous coverage", () => {
+    write(root, "a.txt", "1");
+    const r = run([]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("saved a checkpoint");
+    expect(r.stdout).toContain("snap-back wrap --");
+    expect(r.stdout).toContain("snap-back watch");
+    expect(JSON.parse(run(["list", "--json"]).stdout)).toHaveLength(1);
+  });
+
+  it("undo names a built-in directory it could not restore and how to rebuild it", () => {
+    write(root, "package.json", "{}\n");
+    write(root, "src/index.js", "v1\n");
+    write(root, "node_modules/left-pad/index.js", "x".repeat(4096));
+    run(["snap", "-m", "before agent"]);
+    write(root, "src/index.js", "v2\n");
+    rmSync(path.join(root, "node_modules"), { recursive: true, force: true });
+    const r = run(["undo", "--yes"]);
+    expect(r.code).toBe(0);
+    expect(read(root, "src/index.js")).toBe("v1\n");
+    expect(r.stdout).toContain("node_modules/");
+    expect(r.stdout).toContain("was not stored");
+    expect(r.stdout).toContain("npm install");
+  });
+
+  it("writes a share card on undo when asked", () => {
+    write(root, "a.txt", "1");
+    run(["snap"]);
+    write(root, "a.txt", "2");
+    const r = run(["undo", "--yes", "--card"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Card:");
+    expect(existsSync(path.join(root, "snap-back-card.svg"))).toBe(true);
   });
 });
